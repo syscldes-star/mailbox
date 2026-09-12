@@ -1,0 +1,31 @@
+{
+  "name": "email-service",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3002",
+    "build": "next build",
+    "start": "next start -p 3002"
+  },
+  "dependencies": {
+    "@vercel/functions": "^1.x",
+    "clsx": "^2.1.1",
+    "jsonwebtoken": "^9.0.2",
+    "lucide-react": "^0.400.0",
+    "mongoose": "^8.9.0",
+    "next": "^15.0.0",
+    "oci-common": "^2.140.1",
+    "oci-email": "^2.140.1",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.3.0",
+    "tailwindcss": "^4",
+    "typescript": "^5.5.0"
+  }
+}
