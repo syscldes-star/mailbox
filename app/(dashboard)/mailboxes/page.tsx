@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { ExternalLink, Plus, Search, Pencil, Check, X, Trash2 } from "lucide-react";
-import { apiGet, apiPost, apiPatch, apiDelete, ApiError } from "@/lib/api/client";
+import { Fragment, useEffect, useState } from "react";
+import { ExternalLink, Plus, Search, Pencil, Check, X, Trash2, KeyRound, Copy } from "lucide-react";
+import { apiGet, apiPost, apiPatch, apiPut, apiDelete, ApiError } from "@/lib/api/client";
 import type { ProvisioningState } from "@/lib/email-provisioning/types";
 
 interface Mailbox {
@@ -10,6 +10,7 @@ interface Mailbox {
   name: string;
   active: string | number;
   quota: number;
+  attributes?: { recovery_email?: string };
 }
 
 const WEBMAIL_BASE_URL = process.env.NEXT_PUBLIC_MAILCOW_WEBMAIL_URL ?? "https://email.vidyarishi.in";
@@ -35,6 +36,14 @@ export default function MailboxesPage() {
   const [savingName, setSavingName] = useState(false);
   const [deletingUsername, setDeletingUsername] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+
+  const [editingRecoveryFor, setEditingRecoveryFor] = useState<string | null>(null);
+  const [editingRecoveryEmail, setEditingRecoveryEmail] = useState("");
+  const [savingRecoveryEmail, setSavingRecoveryEmail] = useState(false);
+
+  const [confirmingReset, setConfirmingReset] = useState<string | null>(null);
+  const [resettingUsername, setResettingUsername] = useState<string | null>(null);
+  const [revealedPasswords, setRevealedPasswords] = useState<Record<string, string>>({});
 
   useEffect(() => {
     apiGet<ProvisioningState[]>("/api/email/domains")
@@ -104,6 +113,50 @@ export default function MailboxesPage() {
       setError(err instanceof ApiError ? err.message : "Failed to delete mailbox.");
     } finally {
       setDeletingUsername(null);
+    }
+  }
+
+  async function handleResetPassword(username: string) {
+    setResettingUsername(username);
+    setError(null);
+    try {
+      const result = await apiPut<{ username: string; password: string }>("/api/email/mailboxes", {
+        domain: selectedDomain,
+        username,
+      });
+      setRevealedPasswords((prev) => ({ ...prev, [username]: result.password }));
+      setConfirmingReset(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to reset password.");
+    } finally {
+      setResettingUsername(null);
+    }
+  }
+
+  function startEditingRecoveryEmail(mb: Mailbox) {
+    setEditingRecoveryFor(mb.username);
+    setEditingRecoveryEmail(mb.attributes?.recovery_email ?? "");
+  }
+
+  async function saveRecoveryEmail(username: string) {
+    setSavingRecoveryEmail(true);
+    setError(null);
+    try {
+      await apiPatch("/api/email/mailboxes", { domain: selectedDomain, username, recoveryEmail: editingRecoveryEmail });
+      setMailboxes((prev) =>
+        prev
+          ? prev.map((mb) =>
+              mb.username === username
+                ? { ...mb, attributes: { ...mb.attributes, recovery_email: editingRecoveryEmail } }
+                : mb
+            )
+          : prev
+      );
+      setEditingRecoveryFor(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to update recovery email.");
+    } finally {
+      setSavingRecoveryEmail(false);
     }
   }
 
@@ -205,6 +258,7 @@ export default function MailboxesPage() {
                   <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs text-slate-500">
                     <th className="px-4 py-3 font-medium">Address</th>
                     <th className="px-4 py-3 font-medium">Name</th>
+                    <th className="px-4 py-3 font-medium">Recovery email</th>
                     <th className="px-4 py-3 font-medium">Status</th>
                     <th className="px-4 py-3 font-medium">Check Mail</th>
                     <th className="px-4 py-3 font-medium"></th>
@@ -212,7 +266,8 @@ export default function MailboxesPage() {
                 </thead>
                 <tbody>
                   {filtered.map((mb) => (
-                    <tr key={mb.username} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
+                    <Fragment key={mb.username}>
+                    <tr className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
                       <td className="px-4 py-3 font-medium text-slate-700">{mb.username}</td>
                       <td className="px-4 py-3 text-slate-500">
                         {editingUsername === mb.username ? (
@@ -246,6 +301,48 @@ export default function MailboxesPage() {
                             className="group flex items-center gap-1.5 text-left hover:text-slate-700"
                           >
                             <span>{mb.name || <span className="italic text-slate-300">Add a name</span>}</span>
+                            <Pencil size={11} className="text-slate-300 opacity-0 group-hover:opacity-100" />
+                          </button>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-slate-500">
+                        {editingRecoveryFor === mb.username ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              autoFocus
+                              type="email"
+                              value={editingRecoveryEmail}
+                              onChange={(e) => setEditingRecoveryEmail(e.target.value)}
+                              onKeyDown={(e) => e.key === "Enter" && saveRecoveryEmail(mb.username)}
+                              placeholder="backup@another-provider.com"
+                              className="w-40 rounded border border-slate-200 px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                            />
+                            <button
+                              onClick={() => saveRecoveryEmail(mb.username)}
+                              disabled={savingRecoveryEmail}
+                              className="rounded p-1 text-emerald-600 hover:bg-emerald-50"
+                              title="Save"
+                            >
+                              <Check size={14} />
+                            </button>
+                            <button
+                              onClick={() => setEditingRecoveryFor(null)}
+                              className="rounded p-1 text-slate-400 hover:bg-slate-100"
+                              title="Cancel"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => startEditingRecoveryEmail(mb)}
+                            className="group flex items-center gap-1.5 text-left hover:text-slate-700"
+                          >
+                            <span>
+                              {mb.attributes?.recovery_email || (
+                                <span className="italic text-slate-300">Not set</span>
+                              )}
+                            </span>
                             <Pencil size={11} className="text-slate-300 opacity-0 group-hover:opacity-100" />
                           </button>
                         )}
@@ -290,17 +387,81 @@ export default function MailboxesPage() {
                               <X size={14} />
                             </button>
                           </div>
+                        ) : confirmingReset === mb.username ? (
+                          <div className="flex items-center justify-end gap-2">
+                            <span className="text-xs text-slate-500">Reset password? This invalidates the current one.</span>
+                            <button
+                              onClick={() => handleResetPassword(mb.username)}
+                              disabled={resettingUsername === mb.username}
+                              className="rounded bg-amber-600 px-2 py-1 text-xs font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                            >
+                              {resettingUsername === mb.username ? "Resetting…" : "Confirm"}
+                            </button>
+                            <button
+                              onClick={() => setConfirmingReset(null)}
+                              className="rounded p-1 text-slate-400 hover:bg-slate-100"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
                         ) : (
-                          <button
-                            onClick={() => setConfirmingDelete(mb.username)}
-                            className="rounded p-1.5 text-slate-300 hover:bg-red-50 hover:text-red-600"
-                            title="Delete mailbox"
-                          >
-                            <Trash2 size={14} />
-                          </button>
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => setConfirmingReset(mb.username)}
+                              className="rounded p-1.5 text-slate-300 hover:bg-amber-50 hover:text-amber-600"
+                              title="Reset password"
+                            >
+                              <KeyRound size={14} />
+                            </button>
+                            <button
+                              onClick={() => setConfirmingDelete(mb.username)}
+                              className="rounded p-1.5 text-slate-300 hover:bg-red-50 hover:text-red-600"
+                              title="Delete mailbox"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
+                    {revealedPasswords[mb.username] && (
+                      <tr className="border-b border-slate-50 bg-amber-50/60">
+                        <td colSpan={6} className="px-4 py-2.5">
+                          <div className="flex items-center gap-2 text-xs font-medium text-amber-800">
+                            <KeyRound size={13} />
+                            New password for {mb.username} — save it now, it won't be shown again
+                          </div>
+                          <div className="mt-1.5 flex items-center gap-2">
+                            <code className="flex-1 rounded border border-amber-200 bg-white px-2 py-1.5 text-xs text-slate-700">
+                              {revealedPasswords[mb.username]}
+                            </code>
+                            <button
+                              type="button"
+                              onClick={() => navigator.clipboard.writeText(revealedPasswords[mb.username])}
+                              className="rounded-lg border border-amber-300 bg-white p-1.5 text-amber-700 hover:bg-amber-100"
+                              title="Copy password"
+                            >
+                              <Copy size={14} />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setRevealedPasswords((prev) => {
+                                  const next = { ...prev };
+                                  delete next[mb.username];
+                                  return next;
+                                })
+                              }
+                              className="rounded p-1.5 text-amber-400 hover:bg-amber-100"
+                              title="Dismiss"
+                            >
+                              <X size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

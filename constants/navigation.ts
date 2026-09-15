@@ -8,8 +8,8 @@ export const navigation: NavigationItem[] = [
     icon: Mail,
     type: "collapse",
     children: [
-      { id: "domains", title: "Domains", href: "/email/domains" },
-      { id: "mailboxes", title: "Mailboxes", href: "/email/mailboxes" },
+      { id: "domains", title: "Domains", href: "/domains" },
+      { id: "mailboxes", title: "Mailboxes", href: "/mailboxes" },
     ],
   },
   {

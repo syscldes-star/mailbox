@@ -98,3 +98,44 @@ export async function mailcowDeleteMailbox(username: string) {
     body: JSON.stringify([username]),
   });
 }
+
+/** Sets (or clears, with an empty string) a mailbox's recovery email --
+ * the address Mailcow's own "Forgot Password" flow (mail.<domain>/reset-password)
+ * sends the reset link to. Mailcow's API doesn't support setting this at
+ * mailbox creation time (only after, via /edit/mailbox), so this is a
+ * separate call the UI makes once the mailbox already exists. Required
+ * before that self-service flow will do anything at all for a mailbox --
+ * without it, "Request password change" silently does nothing.
+ *
+ * Note the input key here is `pw_recovery_email`, NOT `recovery_email` --
+ * Mailcow's edit-mailbox handler only reads the former even though the
+ * GET response (and the DB) store/return it as `attributes.recovery_email`.
+ * Sending `recovery_email` in `attr` is silently ignored -- no error, but
+ * nothing is saved either, which is easy to miss without checking the
+ * value actually stuck. */
+export async function mailcowSetRecoveryEmail(username: string, recoveryEmail: string) {
+  return mailcowFetch("/edit/mailbox", {
+    method: "POST",
+    body: JSON.stringify({
+      items: [username],
+      attr: { pw_recovery_email: recoveryEmail },
+    }),
+  });
+}
+
+/** Immediately overwrites a mailbox's password with a freshly generated
+ * one and returns it. There's no self-service recovery flow for mailbox
+ * users yet, so this is how a workspace admin gets someone back into
+ * their mailbox after a "forgot password" -- same one-time-reveal pattern
+ * as the default mailbox password shown at provisioning time. */
+export async function mailcowResetMailboxPassword(username: string) {
+  const password = crypto.randomUUID().replace(/-/g, "").slice(0, 20);
+  await mailcowFetch("/edit/mailbox", {
+    method: "POST",
+    body: JSON.stringify({
+      items: [username],
+      attr: { password, password2: password },
+    }),
+  });
+  return password;
+}

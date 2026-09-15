@@ -7,7 +7,14 @@
 import { NextRequest } from "next/server";
 import { requireAuth } from "@/lib/api/requireAuth";
 import { apiSuccess, apiError } from "@/lib/api/response";
-import { mailcowListMailboxes, mailcowAddMailbox, mailcowEditMailboxName, mailcowDeleteMailbox } from "@/lib/email-provisioning/mailcow-client";
+import {
+  mailcowListMailboxes,
+  mailcowAddMailbox,
+  mailcowEditMailboxName,
+  mailcowDeleteMailbox,
+  mailcowResetMailboxPassword,
+  mailcowSetRecoveryEmail,
+} from "@/lib/email-provisioning/mailcow-client";
 import { loadState } from "@/lib/email-provisioning/state-store";
 
 /** Confirms the domain actually belongs to this workspace before touching
@@ -55,22 +62,37 @@ export async function POST(req: NextRequest) {
   return apiSuccess(result);
 }
 
-/** Update an existing mailbox's display name -- lets the owner set this
- * themselves without needing Mailcow admin access. */
+/** Update an existing mailbox's display name and/or recovery email --
+ * lets the owner set these themselves without needing Mailcow admin
+ * access. The recovery email is what Mailcow's own self-service
+ * "Forgot Password" page (mail.<domain>/reset-password) sends the reset
+ * link to -- it's required for that flow to do anything at all. */
 export async function PATCH(req: NextRequest) {
   const auth = await requireAuth();
   if (!auth) return apiError("Not authenticated.", 401);
 
-  const { domain, username, name } = await req.json();
+  const { domain, username, name, recoveryEmail } = await req.json();
   if (!domain || !username) {
     return apiError("domain and username are required.", 400);
+  }
+  if (name === undefined && recoveryEmail === undefined) {
+    return apiError("Provide name and/or recoveryEmail to update.", 400);
+  }
+  if (recoveryEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recoveryEmail)) {
+    return apiError("recoveryEmail must be a valid email address.", 400);
   }
 
   if (!(await assertWorkspaceOwnsDomain(domain, auth.workspaceId))) {
     return apiError("Domain not found for this workspace.", 404);
   }
 
-  const result = await mailcowEditMailboxName(username, name ?? "");
+  let result: unknown = null;
+  if (name !== undefined) {
+    result = await mailcowEditMailboxName(username, name ?? "");
+  }
+  if (recoveryEmail !== undefined) {
+    result = await mailcowSetRecoveryEmail(username, recoveryEmail ?? "");
+  }
   return apiSuccess(result);
 }
 
@@ -91,4 +113,27 @@ export async function DELETE(req: NextRequest) {
 
   const result = await mailcowDeleteMailbox(username);
   return apiSuccess(result);
+}
+
+/** Resets a mailbox's password to a freshly generated one and returns it
+ * once. There's no self-service "forgot password" flow yet, so this is
+ * the admin-triggered path: the password is generated server-side (never
+ * accepted from the client) and is not persisted anywhere -- the caller
+ * must copy it from this response, same as the one-time reveal at
+ * provisioning time. */
+export async function PUT(req: NextRequest) {
+  const auth = await requireAuth();
+  if (!auth) return apiError("Not authenticated.", 401);
+
+  const { domain, username } = await req.json();
+  if (!domain || !username) {
+    return apiError("domain and username are required.", 400);
+  }
+
+  if (!(await assertWorkspaceOwnsDomain(domain, auth.workspaceId))) {
+    return apiError("Domain not found for this workspace.", 404);
+  }
+
+  const password = await mailcowResetMailboxPassword(username);
+  return apiSuccess({ username, password });
 }
