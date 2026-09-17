@@ -6,12 +6,26 @@ import Link from "next/link";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import clsx from "clsx";
 
-import { NavigationItem } from "@/types/navigation";
+import { NavigationItem, NavigationChild } from "@/types/navigation";
 import SidebarSubMenu from "./SidebarSubMenu";
 import { useSidebar } from "@/context/SidebarContext";
 
 interface SidebarItemProps {
   item: NavigationItem;
+}
+
+// Children can now nest their own children (sub-groups like "Mailbox" /
+// "Email Marketing" inside "Email"), so matching the active path or
+// deciding whether to auto-open has to recurse instead of only checking
+// the immediate children's href.
+function childMatchesActive(child: NavigationChild, pathname: string): boolean {
+  if (child.href && pathname === child.href) return true;
+  return child.children?.some((c) => childMatchesActive(c, pathname)) ?? false;
+}
+
+function childMatchesStartsWith(child: NavigationChild, pathname: string): boolean {
+  if (child.href && pathname.startsWith(child.href)) return true;
+  return child.children?.some((c) => childMatchesStartsWith(c, pathname)) ?? false;
 }
 
 export default function SidebarItem({
@@ -23,9 +37,7 @@ export default function SidebarItem({
     if (item.id === "dashboard") return true;
 
     return (
-      item.children?.some((child) =>
-        pathname.startsWith(child.href)
-      ) ?? false
+      item.children?.some((child) => childMatchesStartsWith(child, pathname)) ?? false
     );
   });
 
@@ -41,7 +53,7 @@ export default function SidebarItem({
   const { collapsed } = useSidebar();
 
   const isActive =
-    item.children?.some((child) => pathname === child.href) ||
+    item.children?.some((child) => childMatchesActive(child, pathname)) ||
     pathname === item.href;
 
   function openFlyout() {

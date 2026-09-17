@@ -40,10 +40,11 @@ export async function mailcowAddDomain(domain: string) {
       domain,
       description: `Auto-provisioned for ${domain}`,
       aliases: 400,
-      mailboxes: 10,
-      defquota: 3072,
-      maxquota: 10240,
-      quota: 10240,
+      mailboxes: 50,
+      defquota: 1024, // default per-mailbox quota (MiB) applied to new mailboxes on this domain
+      maxquota: 10240, // ceiling if a specific mailbox is ever bumped up manually
+      quota: 51200, // domain-wide total (MiB) -- must be >= mailboxes * defquota or mailbox creation
+      // starts failing with "mailbox_quota_left_exceeded" well before the mailbox count limit is hit
       active: "1",
     }),
   });
@@ -70,7 +71,7 @@ export async function mailcowAddMailbox(params: {
       name: params.fullName,
       password: params.password,
       password2: params.password,
-      quota: "3072",
+      quota: "1024", // keep in sync with the defquota set on new domains in mailcowAddDomain above
       active: "1",
     }),
   });
