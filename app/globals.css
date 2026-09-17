@@ -1,1 +1,12 @@
 @import "tailwindcss";
+
+/* Without this, Tailwind's dark: classes (a few leftover ones in
+   Header.tsx/DashboardLayout.tsx from the starter template) follow the
+   browser/OS color-scheme preference automatically -- but this app has no
+   real dark theme or toggle, so switching Chrome to dark mode partially
+   darkened the layout while the rest of the UI stayed light-styled,
+   producing a broken half-dark page. Scoping dark: to an explicit .dark
+   class (which nothing here ever adds) makes those leftover classes
+   permanently inert until a real theme toggle is built. Matches main's
+   globals.css, which already has this. */
+@custom-variant dark (&:is(.dark *));
