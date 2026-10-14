@@ -7,34 +7,31 @@ export const navigation: NavigationItem[] = [
     title: "Email",
     icon: Mail,
     type: "collapse",
-    // Mirrors main's "Email" nav structure (Mailbox + Email Marketing as
-    // nested sub-groups) so the sidebar looks the same whether you're in
-    // this app or in main. The "Mailbox" links are local routes (this app
-    // owns that feature); "Email Marketing" links back out to main, which
-    // owns campaigns/templates/statistics -- see NEXT_PUBLIC_MAIN_APP_URL.
-    children: (() => {
-      const MAIN_APP = process.env.NEXT_PUBLIC_MAIN_APP_URL ?? "";
-      return [
-        {
-          id: "mailbox",
-          title: "Mailbox",
-          children: [
-            { id: "domains", title: "Domains", href: "/domains" },
-            { id: "mailboxes", title: "Mailboxes", href: "/mailboxes" },
-            { id: "bulk-email", title: "Bulk Email", href: "/bulk-email" },
-          ],
-        },
-        {
-          id: "email-marketing",
-          title: "Email Marketing",
-          children: [
-            { id: "campaigns", title: "Campaigns", href: `${MAIN_APP}/emails/campaigns` },
-            { id: "templates", title: "Templates", href: `${MAIN_APP}/emails/templates` },
-            { id: "statistics", title: "Statistics", href: `${MAIN_APP}/emails/statistics` },
-          ],
-        },
-      ];
-    })(),
+    // "Mailbox" covers webmail domains and mailboxes; "Email Marketing" is
+    // the bulk email panel, one link per section (/email-marketing/<tab>).
+    children: [
+      {
+        id: "mailbox",
+        title: "Mailbox",
+        children: [
+          { id: "domains", title: "Domains", href: "/domains" },
+          { id: "mailboxes", title: "Mailboxes", href: "/mailboxes" },
+        ],
+      },
+      {
+        id: "email-marketing",
+        title: "Email Marketing",
+        children: [
+          { id: "em-overview", title: "Overview", href: "/email-marketing/overview" },
+          { id: "em-compose", title: "Compose", href: "/email-marketing/compose" },
+          { id: "em-history", title: "History", href: "/email-marketing/history" },
+          { id: "em-lists", title: "Lists", href: "/email-marketing/lists" },
+          { id: "em-templates", title: "Templates", href: "/email-marketing/templates" },
+          { id: "em-unsubscribes", title: "Unsubscribes", href: "/email-marketing/unsubscribes" },
+          { id: "em-settings", title: "Settings", href: "/email-marketing/settings" },
+        ],
+      },
+    ],
   },
   {
     id: "back-to-dashboard",
