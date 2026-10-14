@@ -5,7 +5,7 @@
 // each send that uses them.
 
 import { Schema, type Document, type Model } from "mongoose";
-import { emailDb } from "../db/mongodb";
+import { emailModel } from "../db/mongodb";
 
 export interface IEmailAttachment extends Document {
   workspaceId: string;
@@ -29,7 +29,4 @@ const EmailAttachmentSchema = new Schema<IEmailAttachment>(
   { timestamps: true }
 );
 
-const db = emailDb();
-export const EmailAttachment: Model<IEmailAttachment> =
-  (db.models.EmailAttachment as Model<IEmailAttachment> | undefined) ??
-  db.model<IEmailAttachment>("EmailAttachment", EmailAttachmentSchema);
+export const EmailAttachment: Model<IEmailAttachment> = emailModel<IEmailAttachment>("EmailAttachment", EmailAttachmentSchema);

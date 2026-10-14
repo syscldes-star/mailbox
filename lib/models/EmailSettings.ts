@@ -3,7 +3,7 @@
 // Per-workspace Bulk Email settings, edited from the panel's Settings tab.
 
 import { Schema, type Document, type Model } from "mongoose";
-import { emailDb } from "../db/mongodb";
+import { emailModel } from "../db/mongodb";
 
 export interface IEmailSettings extends Document {
   workspaceId: string;
@@ -21,6 +21,4 @@ const EmailSettingsSchema = new Schema<IEmailSettings>(
   { timestamps: true }
 );
 
-const db = emailDb();
-export const EmailSettings: Model<IEmailSettings> =
-  (db.models.EmailSettings as Model<IEmailSettings> | undefined) ?? db.model<IEmailSettings>("EmailSettings", EmailSettingsSchema);
+export const EmailSettings: Model<IEmailSettings> = emailModel<IEmailSettings>("EmailSettings", EmailSettingsSchema);

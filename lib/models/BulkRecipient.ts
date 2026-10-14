@@ -10,7 +10,7 @@
 // it must never change.
 
 import { Schema, Types, type Model } from "mongoose";
-import { emailDb } from "../db/mongodb";
+import { emailModel } from "../db/mongodb";
 
 export type RecipientStatus = "pending" | "sent" | "failed" | "skipped";
 
@@ -72,6 +72,4 @@ BulkRecipientSchema.index({ jobId: 1, status: 1, index: 1 });
 BulkRecipientSchema.index({ email: 1, status: 1 });
 BulkRecipientSchema.index({ workspaceId: 1, email: 1, _id: -1 });
 
-const db = emailDb();
-export const BulkRecipient: Model<IBulkRecipient> =
-  (db.models.BulkRecipient as Model<IBulkRecipient> | undefined) ?? db.model<IBulkRecipient>("BulkRecipient", BulkRecipientSchema);
+export const BulkRecipient: Model<IBulkRecipient> = emailModel<IBulkRecipient>("BulkRecipient", BulkRecipientSchema);

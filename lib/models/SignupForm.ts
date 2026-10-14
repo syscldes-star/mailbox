@@ -5,7 +5,7 @@
 // public form lives at /api/subscribe/<id>.
 
 import { Schema, type Document, type Model } from "mongoose";
-import { emailDb } from "../db/mongodb";
+import { emailModel } from "../db/mongodb";
 
 export interface ISignupForm extends Document {
   workspaceId: string;
@@ -48,6 +48,4 @@ const SignupFormSchema = new Schema<ISignupForm>(
   { timestamps: true }
 );
 
-const db = emailDb();
-export const SignupForm: Model<ISignupForm> =
-  (db.models.SignupForm as Model<ISignupForm> | undefined) ?? db.model<ISignupForm>("SignupForm", SignupFormSchema);
+export const SignupForm: Model<ISignupForm> = emailModel<ISignupForm>("SignupForm", SignupFormSchema);

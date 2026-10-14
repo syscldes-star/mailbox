@@ -4,7 +4,7 @@
 // managed from the panel's Templates tab and loadable into Compose.
 
 import { Schema, type Document, type Model } from "mongoose";
-import { emailDb } from "../db/mongodb";
+import { emailModel } from "../db/mongodb";
 
 export interface IEmailTemplate extends Document {
   workspaceId: string;
@@ -29,6 +29,4 @@ const EmailTemplateSchema = new Schema<IEmailTemplate>(
   { timestamps: true }
 );
 
-const db = emailDb();
-export const EmailTemplate: Model<IEmailTemplate> =
-  (db.models.EmailTemplate as Model<IEmailTemplate> | undefined) ?? db.model<IEmailTemplate>("EmailTemplate", EmailTemplateSchema);
+export const EmailTemplate: Model<IEmailTemplate> = emailModel<IEmailTemplate>("EmailTemplate", EmailTemplateSchema);

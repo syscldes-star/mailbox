@@ -6,7 +6,7 @@
 // address on it.
 
 import { Schema, type Document, type Model } from "mongoose";
-import { emailDb } from "../db/mongodb";
+import { emailModel } from "../db/mongodb";
 
 export type SuppressionReason = "unsubscribed" | "bounced" | "complained" | "manual";
 export const SUPPRESSION_REASONS: SuppressionReason[] = ["unsubscribed", "bounced", "complained", "manual"];
@@ -32,6 +32,4 @@ const EmailSuppressionSchema = new Schema<IEmailSuppression>(
 
 EmailSuppressionSchema.index({ workspaceId: 1, email: 1 }, { unique: true });
 
-const db = emailDb();
-export const EmailSuppression: Model<IEmailSuppression> =
-  (db.models.EmailSuppression as Model<IEmailSuppression> | undefined) ?? db.model<IEmailSuppression>("EmailSuppression", EmailSuppressionSchema);
+export const EmailSuppression: Model<IEmailSuppression> = emailModel<IEmailSuppression>("EmailSuppression", EmailSuppressionSchema);

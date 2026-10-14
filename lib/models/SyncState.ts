@@ -4,7 +4,7 @@
 // bounce/complaint sync has read Oracle's suppression list.
 
 import { Schema, type Model } from "mongoose";
-import { emailDb } from "../db/mongodb";
+import { emailModel } from "../db/mongodb";
 
 export interface ISyncState {
   _id: string;
@@ -13,6 +13,4 @@ export interface ISyncState {
 
 const SyncStateSchema = new Schema<ISyncState>({ _id: { type: String, required: true }, at: { type: Date, required: true } });
 
-const db = emailDb();
-export const SyncState: Model<ISyncState> =
-  (db.models.SyncState as Model<ISyncState> | undefined) ?? db.model<ISyncState>("SyncState", SyncStateSchema);
+export const SyncState: Model<ISyncState> = emailModel<ISyncState>("SyncState", SyncStateSchema);

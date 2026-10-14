@@ -6,7 +6,7 @@
 // "city = Delhi".
 
 import { Schema, type Document, type Model } from "mongoose";
-import { emailDb } from "../db/mongodb";
+import { emailModel } from "../db/mongodb";
 
 export const MAX_CONTACTS_PER_LIST = 50000;
 
@@ -47,6 +47,4 @@ const ContactListSchema = new Schema<IContactList>(
   { timestamps: true }
 );
 
-const db = emailDb();
-export const ContactList: Model<IContactList> =
-  (db.models.ContactList as Model<IContactList> | undefined) ?? db.model<IContactList>("ContactList", ContactListSchema);
+export const ContactList: Model<IContactList> = emailModel<IContactList>("ContactList", ContactListSchema);

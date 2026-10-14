@@ -5,7 +5,7 @@
 // otherwise alongside User/WorkspaceMember in the main database.
 
 import { Schema, type Document, type Model } from "mongoose";
-import { emailDb } from "../db/mongodb";
+import { emailModel } from "../db/mongodb";
 import type { ProvisioningStep, StepStatus } from "../email-provisioning/types";
 
 export interface IEmailProvisioning extends Document {
@@ -52,6 +52,4 @@ const EmailProvisioningSchema = new Schema<IEmailProvisioning>(
   { timestamps: true }
 );
 
-const db = emailDb();
-export const EmailProvisioning: Model<IEmailProvisioning> =
-  (db.models.EmailProvisioning as Model<IEmailProvisioning> | undefined) ?? db.model<IEmailProvisioning>("EmailProvisioning", EmailProvisioningSchema);
+export const EmailProvisioning: Model<IEmailProvisioning> = emailModel<IEmailProvisioning>("EmailProvisioning", EmailProvisioningSchema);

@@ -6,7 +6,7 @@
 // sends never has to scan every recipient.
 
 import { Schema, type Document, type Model } from "mongoose";
-import { emailDb } from "../db/mongodb";
+import { emailModel } from "../db/mongodb";
 
 export type { IBulkRecipient, RecipientStatus } from "./BulkRecipient";
 
@@ -113,9 +113,7 @@ const BulkEmailJobSchema = new Schema<IBulkEmailJob>(
   { timestamps: true }
 );
 
-const db = emailDb();
-export const BulkEmailJob: Model<IBulkEmailJob> =
-  (db.models.BulkEmailJob as Model<IBulkEmailJob> | undefined) ?? db.model<IBulkEmailJob>("BulkEmailJob", BulkEmailJobSchema);
+export const BulkEmailJob: Model<IBulkEmailJob> = emailModel<IBulkEmailJob>("BulkEmailJob", BulkEmailJobSchema);
 
 /** Adjusts a job's running totals, e.g. incCounts(id, { sent: 1 }). */
 export function incCounts(jobId: unknown, delta: Partial<JobCounts>, extra: Record<string, unknown> = {}) {
