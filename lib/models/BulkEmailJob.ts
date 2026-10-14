@@ -10,7 +10,7 @@
 import { Schema, type Document, type Model } from "mongoose";
 import { emailDb } from "../db/mongodb";
 
-export type BulkJobStatus = "sending" | "completed" | "cancelled" | "failed";
+export type BulkJobStatus = "scheduled" | "sending" | "completed" | "cancelled" | "failed";
 export type RecipientStatus = "pending" | "sent" | "failed" | "skipped";
 
 export interface IBulkRecipient {
@@ -45,6 +45,8 @@ export interface IBulkEmailJob extends Document {
   fromName?: string;
   replyTo?: string;
   subject: string;
+  /** Inbox preview text shown after the subject in most mail clients. */
+  preheader?: string;
   bodyHtml: string;
   /** Whether each email carries an open-tracking pixel. */
   trackOpens?: boolean;
@@ -57,6 +59,8 @@ export interface IBulkEmailJob extends Document {
   postalAddress?: string;
   recipients: IBulkRecipient[];
   status: BulkJobStatus;
+  /** When a "scheduled" job should start sending. */
+  scheduledAt?: Date;
   /** Last time a worker touched this job. A "sending" job whose
    * heartbeat is stale had its worker die (server restart, deploy) and
    * may be picked up again -- see process-job.ts. */
@@ -98,6 +102,7 @@ const BulkEmailJobSchema = new Schema<IBulkEmailJob>(
     fromName: String,
     replyTo: String,
     subject: { type: String, required: true },
+    preheader: String,
     bodyHtml: { type: String, required: true },
     trackOpens: { type: Boolean, default: false },
     trackClicks: { type: Boolean, default: false },
@@ -106,10 +111,11 @@ const BulkEmailJobSchema = new Schema<IBulkEmailJob>(
     recipients: { type: [RecipientSchema], default: [] },
     status: {
       type: String,
-      enum: ["sending", "completed", "cancelled", "failed"],
+      enum: ["scheduled", "sending", "completed", "cancelled", "failed"],
       default: "sending",
       index: true,
     },
+    scheduledAt: Date,
     heartbeatAt: Date,
     completedAt: Date,
     error: String,

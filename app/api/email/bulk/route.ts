@@ -38,6 +38,7 @@ export async function GET() {
           error: 1,
           createdAt: 1,
           completedAt: 1,
+          scheduledAt: 1,
           total: { $size: "$recipients" },
           sent: { $size: { $filter: { input: "$recipients", cond: { $eq: ["$$this.status", "sent"] } } } },
           failed: { $size: { $filter: { input: "$recipients", cond: { $eq: ["$$this.status", "failed"] } } } },
@@ -88,6 +89,8 @@ interface CreateBody {
   bodyHtml?: string;
   trackOpens?: boolean;
   trackClicks?: boolean;
+  preheader?: string;
+  scheduledAt?: string;
   recipients?: { email?: string; name?: string; vars?: Record<string, unknown> }[];
 }
 
@@ -104,6 +107,18 @@ export async function POST(req: NextRequest) {
   const subject = body.subject?.trim();
   const bodyHtml = body.bodyHtml?.trim();
   const replyTo = body.replyTo?.trim() || undefined;
+  const preheader = body.preheader?.trim().slice(0, 300) || undefined;
+
+  let scheduledAt: Date | undefined;
+  if (body.scheduledAt) {
+    scheduledAt = new Date(body.scheduledAt);
+    const now = Date.now();
+    if (Number.isNaN(scheduledAt.getTime())) return apiError("Scheduled time isn't a valid date.", 400);
+    if (scheduledAt.getTime() < now + 60_000) return apiError("Pick a scheduled time at least a minute from now.", 400);
+    if (scheduledAt.getTime() > now + 90 * 24 * 60 * 60 * 1000) {
+      return apiError("Sends can be scheduled up to 90 days ahead.", 400);
+    }
+  }
 
   if (!fromDomain || !fromLocalPart || !subject || !bodyHtml) {
     return apiError("fromDomain, fromLocalPart, subject, and bodyHtml are required.", 400);
@@ -165,16 +180,22 @@ export async function POST(req: NextRequest) {
     fromName: body.fromName?.trim() || undefined,
     replyTo,
     subject,
+    preheader,
     bodyHtml,
     trackOpens: body.trackOpens !== false,
     trackClicks: body.trackClicks !== false,
     publicBaseUrl: publicBaseUrl(req),
     postalAddress: settings.postalAddress,
     recipients,
-    status: "sending",
+    status: scheduledAt ? "scheduled" : "sending",
+    scheduledAt,
   });
 
-  startBulkJob(String(job._id));
+  if (!scheduledAt) startBulkJob(String(job._id));
 
-  return apiSuccess({ id: String(job._id), total: recipients.length }, "Bulk send started.", 201);
+  return apiSuccess(
+    { id: String(job._id), total: recipients.length, scheduledAt },
+    scheduledAt ? "Bulk send scheduled." : "Bulk send started.",
+    201
+  );
 }

@@ -81,3 +81,19 @@ export function withFooter(bodyHtml: string, postalAddress?: string): string {
   const includeUnsubscribe = !/\{\{\s*unsubscribe_url\s*\}\}/i.test(bodyHtml);
   return bodyHtml + emailFooterHtml({ postalAddress, includeUnsubscribe });
 }
+
+/** Hidden inbox-preview text at the very top of the body. The trailing
+ * zero-width filler stops mail clients from pulling body text into the
+ * preview after it. */
+export function withPreheader(bodyHtml: string, preheader?: string): string {
+  const text = preheader?.trim();
+  if (!text) return bodyHtml;
+  const filler = "&#8199;&#65279;&#847; ".repeat(60);
+  return (
+    '<div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">' +
+    escapeHtml(text) +
+    filler +
+    "</div>" +
+    bodyHtml
+  );
+}

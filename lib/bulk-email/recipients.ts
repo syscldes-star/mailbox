@@ -162,3 +162,19 @@ export function parseRecipients(text: string): ParseResult {
   const looksLikeHeader = /(^|,)\s*"?e-?mail(_address)?"?\s*(,|$)/i.test(firstLine);
   return looksLikeHeader ? parseRecipientsCsv(text) : parseRecipientsList(text);
 }
+
+/** Inverse of parseRecipientsCsv: turns stored recipients back into CSV
+ * text (header row + one row each) so Compose can reuse them -- e.g.
+ * "Send again" or a saved contact list. */
+export function recipientsToCsv(recipients: { email: string; name?: string; vars?: Record<string, string> }[]): string {
+  const extra = new Set<string>();
+  for (const r of recipients) {
+    for (const key of Object.keys(r.vars ?? {})) if (key !== "email" && key !== "name") extra.add(key);
+  }
+  const columns = ["email", "name", ...extra];
+  const cell = (v: string) => (/[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+  const rows = recipients.map((r) =>
+    columns.map((c) => cell(c === "email" ? r.email : c === "name" ? r.name ?? "" : r.vars?.[c] ?? "")).join(",")
+  );
+  return [columns.join(","), ...rows].join("\n");
+}

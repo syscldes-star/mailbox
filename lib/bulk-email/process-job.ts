@@ -12,7 +12,7 @@ import { connectToDatabase } from "../db/mongodb";
 import { BulkEmailJob, type IBulkRecipient } from "../models/BulkEmailJob";
 import { EmailSuppression } from "../models/EmailSuppression";
 import { sendEmail, SendError, type OutgoingEmail } from "./sender";
-import { htmlToText, renderTemplate, withFooter } from "./template";
+import { htmlToText, renderTemplate, withFooter, withPreheader } from "./template";
 import { unsubscribeUrl } from "./unsubscribe";
 import { clickTrackingUrl, openPixelUrl, rewriteLinks, withOpenPixel } from "./tracking";
 
@@ -37,6 +37,7 @@ export interface MessageSource {
   fromName?: string;
   replyTo?: string;
   subject: string;
+  preheader?: string;
   bodyHtml: string;
   publicBaseUrl: string;
   postalAddress?: string;
@@ -51,7 +52,7 @@ export function buildMessage(
 ): OutgoingEmail {
   const unsubscribe = unsubscribeUrl(source.publicBaseUrl, source.workspaceId, recipient.email);
   const vars = { ...(recipient.vars ?? {}), email: recipient.email, name: recipient.name ?? "", unsubscribe_url: unsubscribe };
-  const rendered = renderTemplate(withFooter(source.bodyHtml, source.postalAddress), vars, { html: true });
+  const rendered = renderTemplate(withPreheader(withFooter(source.bodyHtml, source.postalAddress), source.preheader), vars, { html: true });
   // Links are wrapped after rendering so merge tags inside URLs are
   // already filled in; the unsubscribe link is never wrapped.
   const linked = tracking.wrapLink
@@ -188,6 +189,21 @@ export async function resumeStaleJobs(workspaceId?: string): Promise<void> {
     $or: [{ heartbeatAt: null }, { heartbeatAt: { $lt: new Date(Date.now() - HEARTBEAT_STALE_MS) } }],
   }).select("_id");
   for (const job of stale) startBulkJob(String(job._id));
+}
+
+/** Moves scheduled jobs whose time has come to "sending" and starts
+ * them. The status flip is atomic, so a job only ever starts once. */
+export async function startDueScheduledJobs(): Promise<number> {
+  const due = await BulkEmailJob.find({ status: "scheduled", scheduledAt: { $lte: new Date() } }).select("_id");
+  let started = 0;
+  for (const { _id } of due) {
+    const flipped = await BulkEmailJob.updateOne({ _id, status: "scheduled" }, { $set: { status: "sending" } });
+    if (flipped.modifiedCount === 1) {
+      startBulkJob(String(_id));
+      started++;
+    }
+  }
+  return started;
 }
 
 function sleep(ms: number) {

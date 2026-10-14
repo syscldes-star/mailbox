@@ -20,12 +20,16 @@ import {
   MailOpen,
   MousePointerClick,
   RefreshCw,
+  Save,
+  CalendarClock,
+  FileText,
 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, ApiError } from "@/lib/api/client";
-import { parseRecipients, MAX_RECIPIENTS_PER_JOB, type ParseResult } from "@/lib/bulk-email/recipients";
+import { parseRecipients, recipientsToCsv, MAX_RECIPIENTS_PER_JOB, type ParseResult } from "@/lib/bulk-email/recipients";
 import { extractTags, renderTemplate, withFooter } from "@/lib/bulk-email/template";
 import SettingsTab from "@/components/bulk-email/SettingsTab";
 import UnsubscribesTab from "@/components/bulk-email/UnsubscribesTab";
+import TemplatesTab, { type SavedTemplate } from "@/components/bulk-email/TemplatesTab";
 
 interface SenderDomain {
   domain: string;
@@ -38,7 +42,8 @@ interface JobSummary {
   fromLocalPart: string;
   fromName?: string;
   subject: string;
-  status: "sending" | "completed" | "cancelled" | "failed";
+  status: "scheduled" | "sending" | "completed" | "cancelled" | "failed";
+  scheduledAt?: string;
   error?: string;
   createdAt: string;
   completedAt?: string;
@@ -83,14 +88,38 @@ interface ListResponse {
   usage: { usedLast24h: number; dailyLimit: number };
 }
 
-type Tab = "compose" | "history" | "unsubscribes" | "settings";
+type Tab = "compose" | "history" | "templates" | "unsubscribes" | "settings";
 
 const TAB_LABEL: Record<Tab, string> = {
   compose: "Compose",
   history: "History",
+  templates: "Templates",
   unsubscribes: "Unsubscribes",
   settings: "Settings",
 };
+
+type SendAgainAudience = "all" | "not_opened" | "not_clicked";
+
+interface ComposeDraft {
+  fromDomain?: string;
+  fromLocalPart?: string;
+  fromName?: string;
+  replyTo?: string;
+  subject?: string;
+  preheader?: string;
+  bodyHtml?: string;
+  recipientsText?: string;
+  trackOpens?: boolean;
+  trackClicks?: boolean;
+}
+
+const DRAFT_STORAGE_KEY = "bulk-email-draft-v1";
+
+/** Value for a datetime-local input, in the browser's own timezone. */
+function toLocalInputValue(date: Date) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 
 type RecipientFilter = "all" | JobRecipient["status"] | "opened" | "not_opened" | "clicked" | "bounced";
 
@@ -112,6 +141,7 @@ const inputClass =
 const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 
 const STATUS_BADGE: Record<JobSummary["status"], string> = {
+  scheduled: "bg-amber-50 text-amber-800",
   sending: "bg-indigo-50 text-indigo-700",
   completed: "bg-emerald-50 text-emerald-700",
   cancelled: "bg-slate-100 text-slate-600",
@@ -163,6 +193,12 @@ export default function BulkEmailPage() {
   const [fromName, setFromName] = useState("");
   const [replyTo, setReplyTo] = useState("");
   const [subject, setSubject] = useState("");
+  const [preheader, setPreheader] = useState("");
+  const [scheduleMode, setScheduleMode] = useState<"now" | "later">("now");
+  const [scheduledLocal, setScheduledLocal] = useState("");
+  const [savingTemplateName, setSavingTemplateName] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<SavedTemplate[]>([]);
+  const [draftRestored, setDraftRestored] = useState(false);
   const [bodyHtml, setBodyHtml] = useState(DEFAULT_BODY);
   const [recipientsText, setRecipientsText] = useState("");
   const [trackOpens, setTrackOpens] = useState(true);
@@ -207,15 +243,139 @@ export default function BulkEmailPage() {
     }
   }
 
+  async function loadTemplates() {
+    try {
+      setTemplates((await apiGet<{ templates: SavedTemplate[] }>("/api/email/templates")).templates);
+    } catch {
+      // Templates are optional -- Compose works without them.
+    }
+  }
+
   useEffect(() => {
     refresh();
+    loadTemplates();
+    // Restore an unsent draft from this browser, if there is one.
+    try {
+      const saved = localStorage.getItem(DRAFT_STORAGE_KEY);
+      if (saved) {
+        const draft = JSON.parse(saved) as ComposeDraft;
+        if (draft.subject || draft.recipientsText || (draft.bodyHtml && draft.bodyHtml !== DEFAULT_BODY)) {
+          applyDraft(draft);
+          setDraftRestored(true);
+        }
+      }
+    } catch {
+      // Storage unavailable or corrupt -- start blank.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Autosave the draft in this browser so a refresh or closed tab doesn't
+  // lose work. Large recipient lists are skipped to stay within storage.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      try {
+        const draft: ComposeDraft = {
+          fromName,
+          replyTo,
+          subject,
+          preheader,
+          bodyHtml,
+          recipientsText: recipientsText.length < 400_000 ? recipientsText : "",
+          trackOpens,
+          trackClicks,
+        };
+        localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+      } catch {
+        // Storage full or unavailable -- autosave is best-effort.
+      }
+    }, 500);
+    return () => clearTimeout(t);
+  }, [fromName, replyTo, subject, preheader, bodyHtml, recipientsText, trackOpens, trackClicks]);
+
+  function applyDraft(d: ComposeDraft) {
+    if (d.fromDomain) setFromDomain(d.fromDomain);
+    if (d.fromLocalPart) setFromLocalPart(d.fromLocalPart);
+    if (d.fromName !== undefined) setFromName(d.fromName);
+    if (d.replyTo !== undefined) setReplyTo(d.replyTo);
+    if (d.subject !== undefined) setSubject(d.subject);
+    if (d.preheader !== undefined) setPreheader(d.preheader);
+    if (d.bodyHtml !== undefined) setBodyHtml(d.bodyHtml);
+    if (d.recipientsText !== undefined) setRecipientsText(d.recipientsText);
+    if (d.trackOpens !== undefined) setTrackOpens(d.trackOpens);
+    if (d.trackClicks !== undefined) setTrackClicks(d.trackClicks);
+  }
+
+  function clearCompose() {
+    setSubject("");
+    setPreheader("");
+    setBodyHtml(DEFAULT_BODY);
+    setRecipientsText("");
+    setScheduleMode("now");
+    setScheduledLocal("");
+    setDraftRestored(false);
+    try {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+    } catch {
+      // ignore
+    }
+  }
+
+  function loadIntoCompose(d: ComposeDraft, notice: string) {
+    applyDraft(d);
+    setBodyView("edit");
+    setConfirming(false);
+    setComposeError(null);
+    setComposeNotice(notice);
+    setDraftRestored(false);
+    setTab("compose");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function sendAgain(id: string, audience: SendAgainAudience) {
+    try {
+      const d = await apiGet<ComposeDraft & { recipients: { email: string; name: string; vars: Record<string, string> }[] }>(
+        `/api/email/bulk/${id}?draft=${audience}`
+      );
+      if (d.recipients.length === 0) {
+        setHistoryError("Nobody matches -- everyone in that send already opened/clicked.");
+        return;
+      }
+      const who = audience === "all" ? "all recipients" : audience === "not_opened" ? "people who didn't open" : "people who didn't click";
+      loadIntoCompose(
+        { ...d, recipientsText: recipientsToCsv(d.recipients) },
+        `Loaded "${d.subject}" with ${d.recipients.length.toLocaleString()} ${who}. Review it, then send.`
+      );
+    } catch (err) {
+      setHistoryError(err instanceof ApiError ? err.message : "Couldn't load that send.");
+    }
+  }
+
+  function applyTemplate(t: SavedTemplate) {
+    loadIntoCompose(
+      { subject: t.subject, preheader: t.preheader ?? "", bodyHtml: t.bodyHtml },
+      `Template "${t.name}" loaded. Add recipients, then send.`
+    );
+  }
+
+  async function saveTemplate() {
+    if (!savingTemplateName?.trim()) return;
+    try {
+      await apiPost("/api/email/templates", { name: savingTemplateName, subject, preheader, bodyHtml });
+      setComposeNotice(`Saved as template "${savingTemplateName.trim()}".`);
+      setSavingTemplateName(null);
+      loadTemplates();
+    } catch (err) {
+      setComposeError(err instanceof ApiError ? err.message : "Couldn't save the template.");
+    }
+  }
 
   const anySending = data?.jobs.some((j) => j.status === "sending") ?? false;
   // Opens keep arriving after a send finishes, so an expanded send keeps
   // refreshing too -- just less often.
+  const anyScheduled = data?.jobs.some((j) => j.status === "scheduled") ?? false;
   useEffect(() => {
-    if (!anySending && !expandedId) return;
+    if (!anySending && !expandedId && !anyScheduled) return;
     const interval = setInterval(
       () => {
         refresh();
@@ -224,7 +384,7 @@ export default function BulkEmailPage() {
       anySending ? 3000 : 30000
     );
     return () => clearInterval(interval);
-  }, [anySending, expandedId]);
+  }, [anySending, expandedId, anyScheduled]);
 
   const parsed: ParseResult & { parseError?: string } = useMemo(() => {
     if (!recipientsText.trim()) return { recipients: [], invalid: [], duplicates: 0, columns: ["email", "name"] };
@@ -275,7 +435,7 @@ export default function BulkEmailPage() {
   }
 
   function draftPayload() {
-    return { fromDomain, fromLocalPart, fromName, replyTo, subject, bodyHtml };
+    return { fromDomain, fromLocalPart, fromName, replyTo, subject, preheader, bodyHtml };
   }
 
   async function handleTest() {
@@ -301,12 +461,11 @@ export default function BulkEmailPage() {
         ...draftPayload(),
         trackOpens,
         trackClicks,
+        scheduledAt: scheduleMode === "later" && scheduledLocal ? new Date(scheduledLocal).toISOString() : undefined,
         recipients: parsed.recipients,
       });
       setConfirming(false);
-      setRecipientsText("");
-      setSubject("");
-      setBodyHtml(DEFAULT_BODY);
+      clearCompose();
       await refresh();
       setTab("history");
       setExpandedId(result.id);
@@ -351,6 +510,7 @@ export default function BulkEmailPage() {
     !!subject.trim() &&
     !!bodyHtml.trim() &&
     parsed.recipients.length > 0 &&
+    (scheduleMode === "now" || !!scheduledLocal) &&
     !tooMany &&
     !overLimit &&
     !missingAddress;
@@ -408,6 +568,39 @@ export default function BulkEmailPage() {
             <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
               <AlertTriangle size={16} className="mt-0.5 shrink-0" />
               Your role can view bulk sends but not send them. Ask a manager, admin, or owner.
+            </div>
+          )}
+
+          {(draftRestored || templates.length > 0) && (
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              {draftRestored && (
+                <span className="flex items-center gap-2 rounded-lg bg-indigo-50 px-3 py-1.5 text-indigo-800">
+                  Restored your unsent draft.
+                  <button onClick={clearCompose} className="font-medium underline">
+                    Start fresh
+                  </button>
+                </span>
+              )}
+              {templates.length > 0 && (
+                <label className="ml-auto flex items-center gap-2 text-slate-600">
+                  <FileText size={15} />
+                  <select
+                    value=""
+                    onChange={(e) => {
+                      const t = templates.find((x) => x.id === e.target.value);
+                      if (t) applyTemplate(t);
+                    }}
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm"
+                  >
+                    <option value="">Load a template…</option>
+                    {templates.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
             </div>
           )}
 
@@ -525,6 +718,16 @@ export default function BulkEmailPage() {
                   className={inputClass}
                 />
               </div>
+              <div>
+                <label className={labelClass}>Preview text (optional)</label>
+                <input
+                  value={preheader}
+                  onChange={(e) => setPreheader(e.target.value)}
+                  maxLength={300}
+                  placeholder="The short line shown after the subject in the inbox"
+                  className={inputClass}
+                />
+              </div>
 
               <div>
                 <div className="mb-1 flex items-center justify-between">
@@ -562,6 +765,12 @@ export default function BulkEmailPage() {
                       <p>
                         <span className="text-slate-400">Subject:</span> {previewSubject || <em>(no subject)</em>}
                       </p>
+                      {preheader && (
+                        <p>
+                          <span className="text-slate-400">Preview text:</span>{" "}
+                          {renderTemplate(preheader, previewVars, { html: false })}
+                        </p>
+                      )}
                     </div>
                     <iframe
                       title="Email preview"
@@ -620,6 +829,70 @@ export default function BulkEmailPage() {
             </div>
           </div>
 
+          {/* Save as template + schedule */}
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            {savingTemplateName === null ? (
+              <button
+                type="button"
+                onClick={() => setSavingTemplateName(subject || "")}
+                disabled={!canSend || !bodyHtml.trim()}
+                className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                <Save size={15} /> Save as template
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  value={savingTemplateName}
+                  onChange={(e) => setSavingTemplateName(e.target.value)}
+                  placeholder="Template name"
+                  autoFocus
+                  className={inputClass + " w-56"}
+                />
+                <button
+                  type="button"
+                  onClick={saveTemplate}
+                  disabled={!savingTemplateName.trim()}
+                  className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  Save
+                </button>
+                <button type="button" onClick={() => setSavingTemplateName(null)} className="text-sm text-slate-500 hover:text-slate-900">
+                  Cancel
+                </button>
+              </div>
+            )}
+
+            <div className="ml-auto flex flex-wrap items-center gap-2 text-sm text-slate-700">
+              <CalendarClock size={15} className="text-slate-400" />
+              <label className="flex items-center gap-1">
+                <input type="radio" checked={scheduleMode === "now"} onChange={() => setScheduleMode("now")} className="accent-indigo-600" />
+                Send now
+              </label>
+              <label className="flex items-center gap-1">
+                <input
+                  type="radio"
+                  checked={scheduleMode === "later"}
+                  onChange={() => {
+                    setScheduleMode("later");
+                    if (!scheduledLocal) setScheduledLocal(toLocalInputValue(new Date(Date.now() + 60 * 60 * 1000)));
+                  }}
+                  className="accent-indigo-600"
+                />
+                Schedule
+              </label>
+              {scheduleMode === "later" && (
+                <input
+                  type="datetime-local"
+                  value={scheduledLocal}
+                  min={toLocalInputValue(new Date())}
+                  onChange={(e) => setScheduledLocal(e.target.value)}
+                  className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
+                />
+              )}
+            </div>
+          </div>
+
           {/* Actions */}
           <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="min-w-[220px] flex-1">
@@ -643,7 +916,9 @@ export default function BulkEmailPage() {
             {confirming ? (
               <div className="flex items-center gap-2">
                 <span className="text-sm text-slate-700">
-                  Send to {parsed.recipients.length.toLocaleString()} recipients?
+                  {scheduleMode === "later" && scheduledLocal
+                    ? `Schedule for ${new Date(scheduledLocal).toLocaleString()} to ${parsed.recipients.length.toLocaleString()} recipients?`
+                    : `Send to ${parsed.recipients.length.toLocaleString()} recipients?`}
                 </span>
                 <button
                   type="button"
@@ -652,7 +927,7 @@ export default function BulkEmailPage() {
                   className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
                 >
                   {sending ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-                  Yes, send
+                  {scheduleMode === "later" ? "Yes, schedule" : "Yes, send"}
                 </button>
                 <button
                   type="button"
@@ -669,8 +944,8 @@ export default function BulkEmailPage() {
                 disabled={!formValid || !canSend}
                 className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50"
               >
-                <Send size={15} />
-                Send to {parsed.recipients.length.toLocaleString()}
+                {scheduleMode === "later" ? <CalendarClock size={15} /> : <Send size={15} />}
+                {scheduleMode === "later" ? "Schedule" : "Send to"} {parsed.recipients.length.toLocaleString()}
               </button>
             )}
           </div>
@@ -769,6 +1044,9 @@ export default function BulkEmailPage() {
                               {job.status === "sending" && <Loader2 size={11} className="mr-1 inline animate-spin" />}
                               {job.status}
                             </span>
+                            {job.status === "scheduled" && job.scheduledAt && (
+                              <p className="mt-1 whitespace-nowrap text-xs text-amber-700">{formatDate(job.scheduledAt)}</p>
+                            )}
                           </td>
                           <td className="whitespace-nowrap px-3 py-3 text-xs text-slate-500">{formatDate(job.createdAt)}</td>
                         </tr>
@@ -783,6 +1061,7 @@ export default function BulkEmailPage() {
                                 onFilter={setRecipientFilter}
                                 actionPending={actionPending}
                                 onAction={(action) => jobAction(job.id, action)}
+                                onSendAgain={(audience) => sendAgain(job.id, audience)}
                                 onRefresh={() => {
                                   refresh();
                                   refreshDetail(job.id);
@@ -801,6 +1080,7 @@ export default function BulkEmailPage() {
         </div>
       )}
 
+      {tab === "templates" && <TemplatesTab onUse={applyTemplate} />}
       {tab === "unsubscribes" && <UnsubscribesTab />}
       {tab === "settings" && <SettingsTab onSaved={refresh} />}
     </div>
@@ -816,6 +1096,7 @@ function JobDetailPanel({
   actionPending,
   onAction,
   onRefresh,
+  onSendAgain,
 }: {
   job: JobSummary;
   detail: JobDetail | null;
@@ -825,6 +1106,7 @@ function JobDetailPanel({
   actionPending: string | null;
   onAction: (action: "cancel" | "resume" | "retry_failed") => void;
   onRefresh: () => void;
+  onSendAgain: (audience: SendAgainAudience) => void;
 }) {
   if (!detail) return <p className="text-xs text-slate-400">Loading details…</p>;
 
@@ -854,19 +1136,24 @@ function JobDetailPanel({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         {job.fromName && <span className="text-xs text-slate-500">From name: {job.fromName}</span>}
-        {job.completedAt && <span className="text-xs text-slate-500">Finished {formatDate(job.completedAt)}</span>}
+        {job.status === "scheduled" && job.scheduledAt && (
+          <span className="text-xs text-amber-700">Scheduled for {formatDate(job.scheduledAt)}</span>
+        )}
+        {job.completedAt && job.status !== "cancelled" && (
+          <span className="text-xs text-slate-500">Finished {formatDate(job.completedAt)}</span>
+        )}
         {job.error && <span className="text-xs text-red-600">Error: {job.error}</span>}
         <div className="ml-auto flex gap-2">
-          {canManage && job.status === "sending" && (
+          {canManage && (job.status === "sending" || job.status === "scheduled") && (
             <button
               onClick={() => onAction("cancel")}
               disabled={busy("cancel")}
               className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
             >
-              <Ban size={13} /> Cancel send
+              <Ban size={13} /> {job.status === "scheduled" ? "Cancel scheduled send" : "Cancel send"}
             </button>
           )}
-          {canManage && job.status !== "sending" && pending > 0 && (
+          {canManage && job.status !== "sending" && job.status !== "scheduled" && pending > 0 && (
             <button
               onClick={() => onAction("resume")}
               disabled={busy("resume")}
@@ -875,7 +1162,7 @@ function JobDetailPanel({
               <Send size={13} /> Resume ({pending} left)
             </button>
           )}
-          {canManage && job.status !== "sending" && job.failed > 0 && (
+          {canManage && job.status !== "sending" && job.status !== "scheduled" && job.failed > 0 && (
             <button
               onClick={() => onAction("retry_failed")}
               disabled={busy("retry_failed")}
@@ -883,6 +1170,18 @@ function JobDetailPanel({
             >
               <RotateCcw size={13} /> Retry {job.failed} failed
             </button>
+          )}
+          {canManage && (
+            <select
+              value=""
+              onChange={(e) => e.target.value && onSendAgain(e.target.value as SendAgainAudience)}
+              className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              <option value="">Send again…</option>
+              <option value="all">To everyone</option>
+              {job.trackOpens && <option value="not_opened">To people who didn&apos;t open</option>}
+              {job.trackClicks && <option value="not_clicked">To people who didn&apos;t click</option>}
+            </select>
           )}
           <button
             onClick={onRefresh}

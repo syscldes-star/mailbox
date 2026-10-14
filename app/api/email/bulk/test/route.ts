@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     return apiError("Only managers, admins, and owners can send bulk email.", 403);
   }
 
-  const { testEmail, fromDomain, fromLocalPart, fromName, replyTo, subject, bodyHtml, sample } = await req.json();
+  const { testEmail, fromDomain, fromLocalPart, fromName, replyTo, subject, preheader, bodyHtml, sample } = await req.json();
   const to = String(testEmail ?? "").trim().toLowerCase();
   const domain = String(fromDomain ?? "").trim().toLowerCase();
   const localPart = String(fromLocalPart ?? "").trim().toLowerCase();
@@ -48,6 +48,7 @@ export async function POST(req: NextRequest) {
       fromName: fromName || undefined,
       replyTo: replyTo || undefined,
       subject: `[Test] ${subject}`,
+      preheader: preheader ? String(preheader).slice(0, 300) : undefined,
       bodyHtml,
       publicBaseUrl: publicBaseUrl(req),
       postalAddress: (await getEmailSettings(auth.workspaceId)).postalAddress,

@@ -4,12 +4,13 @@
 // instrumentation.ts. The app runs as a single long-lived pm2 process,
 // so a plain interval is enough -- no external cron needed.
 //
-// Every minute: restart sends whose worker died. Every 15 minutes: sync
+// Every minute: start scheduled sends that are due and restart sends
+// whose worker died. Every 15 minutes: sync
 // bounces and spam complaints from Oracle. Set BULK_EMAIL_SCHEDULER=off
 // to disable (e.g. on a second process sharing the same database).
 
 import { connectToDatabase } from "../db/mongodb";
-import { resumeStaleJobs } from "./process-job";
+import { resumeStaleJobs, startDueScheduledJobs } from "./process-job";
 import { syncBounces } from "./bounces";
 
 const TICK_MS = 60_000;
@@ -21,6 +22,7 @@ declare global {
 
 async function tick(count: number) {
   await connectToDatabase();
+  await startDueScheduledJobs();
   await resumeStaleJobs();
   if (count % BOUNCE_SYNC_EVERY_TICKS === 0) {
     const result = await syncBounces();
