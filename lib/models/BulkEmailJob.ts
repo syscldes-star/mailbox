@@ -7,7 +7,8 @@
 // Mongo's 16MB limit while letting progress updates stay a single
 // atomic write per recipient.
 
-import mongoose, { Schema, type Document, type Model } from "mongoose";
+import { Schema, type Document, type Model } from "mongoose";
+import { emailDb } from "../db/mongodb";
 
 export type BulkJobStatus = "sending" | "completed" | "cancelled" | "failed";
 export type RecipientStatus = "pending" | "sent" | "failed" | "skipped";
@@ -94,5 +95,6 @@ const BulkEmailJobSchema = new Schema<IBulkEmailJob>(
   { timestamps: true }
 );
 
+const db = emailDb();
 export const BulkEmailJob: Model<IBulkEmailJob> =
-  mongoose.models.BulkEmailJob ?? mongoose.model<IBulkEmailJob>("BulkEmailJob", BulkEmailJobSchema);
+  (db.models.BulkEmailJob as Model<IBulkEmailJob> | undefined) ?? db.model<IBulkEmailJob>("BulkEmailJob", BulkEmailJobSchema);
