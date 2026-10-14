@@ -39,6 +39,12 @@ export async function GET() {
           sent: { $size: { $filter: { input: "$recipients", cond: { $eq: ["$$this.status", "sent"] } } } },
           failed: { $size: { $filter: { input: "$recipients", cond: { $eq: ["$$this.status", "failed"] } } } },
           skipped: { $size: { $filter: { input: "$recipients", cond: { $eq: ["$$this.status", "skipped"] } } } },
+          opened: {
+            $size: {
+              $filter: { input: "$recipients", cond: { $ne: [{ $ifNull: ["$$this.openedAt", null] }, null] } },
+            },
+          },
+          trackOpens: 1,
         },
       },
     ]),
@@ -58,6 +64,7 @@ interface CreateBody {
   replyTo?: string;
   subject?: string;
   bodyHtml?: string;
+  trackOpens?: boolean;
   recipients?: { email?: string; name?: string; vars?: Record<string, unknown> }[];
 }
 
@@ -119,6 +126,7 @@ export async function POST(req: NextRequest) {
     replyTo,
     subject,
     bodyHtml,
+    trackOpens: body.trackOpens !== false,
     publicBaseUrl: publicBaseUrl(req),
     recipients,
     status: "sending",

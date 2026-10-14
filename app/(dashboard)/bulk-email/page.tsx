@@ -17,6 +17,8 @@ import {
   Download,
   ChevronDown,
   ChevronRight,
+  MailOpen,
+  RefreshCw,
 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, ApiError } from "@/lib/api/client";
 import { parseRecipients, MAX_RECIPIENTS_PER_JOB, type ParseResult } from "@/lib/bulk-email/recipients";
@@ -41,6 +43,8 @@ interface JobSummary {
   sent: number;
   failed: number;
   skipped: number;
+  opened: number;
+  trackOpens?: boolean;
 }
 
 interface JobRecipient {
@@ -49,9 +53,12 @@ interface JobRecipient {
   status: "pending" | "sent" | "failed" | "skipped";
   error?: string;
   sentAt?: string;
+  openedAt?: string;
+  lastOpenedAt?: string;
+  openCount?: number;
 }
 
-interface JobDetail extends Omit<JobSummary, "total" | "sent" | "failed" | "skipped"> {
+interface JobDetail extends Omit<JobSummary, "total" | "sent" | "failed" | "skipped" | "opened"> {
   recipients: JobRecipient[];
 }
 
@@ -59,6 +66,15 @@ interface ListResponse {
   senders: SenderDomain[];
   canSend: boolean;
   jobs: JobSummary[];
+}
+
+type RecipientFilter = "all" | JobRecipient["status"] | "opened" | "not_opened";
+
+function matchesFilter(r: JobRecipient, filter: RecipientFilter) {
+  if (filter === "all") return true;
+  if (filter === "opened") return !!r.openedAt;
+  if (filter === "not_opened") return r.status === "sent" && !r.openedAt;
+  return r.status === filter;
 }
 
 const DEFAULT_BODY = `<p>Hi {{name}},</p>
@@ -83,9 +99,11 @@ function formatDate(iso?: string) {
 function downloadCsv(job: JobDetail) {
   const escape = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
   const lines = [
-    "email,name,status,error,sent_at",
+    "email,name,status,error,sent_at,opened_at,open_count",
     ...job.recipients.map((r) =>
-      [r.email, r.name ?? "", r.status, r.error ?? "", r.sentAt ?? ""].map(escape).join(",")
+      [r.email, r.name ?? "", r.status, r.error ?? "", r.sentAt ?? "", r.openedAt ?? "", String(r.openCount ?? 0)]
+        .map(escape)
+        .join(",")
     ),
   ];
   const url = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
@@ -109,6 +127,7 @@ export default function BulkEmailPage() {
   const [subject, setSubject] = useState("");
   const [bodyHtml, setBodyHtml] = useState(DEFAULT_BODY);
   const [recipientsText, setRecipientsText] = useState("");
+  const [trackOpens, setTrackOpens] = useState(true);
   const [bodyView, setBodyView] = useState<"edit" | "preview">("edit");
   const [testEmail, setTestEmail] = useState("");
   const [testing, setTesting] = useState(false);
@@ -122,7 +141,7 @@ export default function BulkEmailPage() {
   // History state
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<JobDetail | null>(null);
-  const [recipientFilter, setRecipientFilter] = useState<"all" | JobRecipient["status"]>("all");
+  const [recipientFilter, setRecipientFilter] = useState<RecipientFilter>("all");
   const [actionPending, setActionPending] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
 
@@ -153,14 +172,18 @@ export default function BulkEmailPage() {
     refresh();
   }, []);
 
-  // Poll only while something is actually sending.
   const anySending = data?.jobs.some((j) => j.status === "sending") ?? false;
+  // Opens keep arriving after a send finishes, so an expanded send keeps
+  // refreshing too -- just less often.
   useEffect(() => {
-    if (!anySending) return;
-    const interval = setInterval(() => {
-      refresh();
-      if (expandedId) refreshDetail(expandedId);
-    }, 3000);
+    if (!anySending && !expandedId) return;
+    const interval = setInterval(
+      () => {
+        refresh();
+        if (expandedId) refreshDetail(expandedId);
+      },
+      anySending ? 3000 : 30000
+    );
     return () => clearInterval(interval);
   }, [anySending, expandedId]);
 
@@ -234,6 +257,7 @@ export default function BulkEmailPage() {
     try {
       const result = await apiPost<{ id: string; total: number }>("/api/email/bulk", {
         ...draftPayload(),
+        trackOpens,
         recipients: parsed.recipients,
       });
       setConfirming(false);
@@ -506,6 +530,16 @@ export default function BulkEmailPage() {
                   recipient data and will render empty.
                 </p>
               )}
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={trackOpens}
+                  onChange={(e) => setTrackOpens(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 accent-indigo-600"
+                />
+                Track opens
+                <span className="text-xs text-slate-400">(adds an invisible 1×1 image to each email)</span>
+              </label>
               <p className="text-xs text-slate-400">
                 An unsubscribe link is added automatically unless you place {"{{unsubscribe_url}}"} yourself.
                 Unsubscribed addresses are skipped on future sends.
@@ -583,6 +617,7 @@ export default function BulkEmailPage() {
                   <th className="px-3 py-3">Subject</th>
                   <th className="px-3 py-3">From</th>
                   <th className="px-3 py-3">Progress</th>
+                  <th className="px-3 py-3">Opened</th>
                   <th className="px-3 py-3">Status</th>
                   <th className="px-3 py-3">Created</th>
                 </tr>
@@ -590,13 +625,13 @@ export default function BulkEmailPage() {
               <tbody>
                 {data === null ? (
                   <tr>
-                    <td colSpan={6} className="px-3 py-6 text-center text-slate-400">
+                    <td colSpan={7} className="px-3 py-6 text-center text-slate-400">
                       Loading…
                     </td>
                   </tr>
                 ) : data.jobs.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-3 py-6 text-center text-slate-400">
+                    <td colSpan={7} className="px-3 py-6 text-center text-slate-400">
                       No bulk sends yet.
                     </td>
                   </tr>
@@ -628,6 +663,18 @@ export default function BulkEmailPage() {
                               {job.skipped > 0 && <span> · {job.skipped} skipped</span>} / {job.total.toLocaleString()}
                             </p>
                           </td>
+                          <td className="whitespace-nowrap px-3 py-3 text-xs">
+                            {job.trackOpens ? (
+                              <>
+                                <span className="font-medium text-slate-900">
+                                  {job.sent ? Math.round((job.opened / job.sent) * 100) : 0}%
+                                </span>
+                                <span className="text-slate-500"> · {job.opened.toLocaleString()}</span>
+                              </>
+                            ) : (
+                              <span className="text-slate-400">Not tracked</span>
+                            )}
+                          </td>
                           <td className="px-3 py-3">
                             <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_BADGE[job.status]}`}>
                               {job.status === "sending" && <Loader2 size={11} className="mr-1 inline animate-spin" />}
@@ -638,7 +685,7 @@ export default function BulkEmailPage() {
                         </tr>
                         {expanded && (
                           <tr className="border-b border-slate-100 bg-slate-50/50">
-                            <td colSpan={6} className="px-5 py-4">
+                            <td colSpan={7} className="px-5 py-4">
                               <JobDetailPanel
                                 job={job}
                                 detail={detail?.id === job.id ? detail : null}
@@ -647,6 +694,10 @@ export default function BulkEmailPage() {
                                 onFilter={setRecipientFilter}
                                 actionPending={actionPending}
                                 onAction={(action) => jobAction(job.id, action)}
+                                onRefresh={() => {
+                                  refresh();
+                                  refreshDetail(job.id);
+                                }}
                               />
                             </td>
                           </tr>
@@ -672,19 +723,25 @@ function JobDetailPanel({
   onFilter,
   actionPending,
   onAction,
+  onRefresh,
 }: {
   job: JobSummary;
   detail: JobDetail | null;
   canManage: boolean;
-  filter: "all" | JobRecipient["status"];
-  onFilter: (f: "all" | JobRecipient["status"]) => void;
+  filter: RecipientFilter;
+  onFilter: (f: RecipientFilter) => void;
   actionPending: string | null;
   onAction: (action: "cancel" | "resume" | "retry_failed") => void;
+  onRefresh: () => void;
 }) {
   if (!detail) return <p className="text-xs text-slate-400">Loading details…</p>;
 
   const pending = detail.recipients.filter((r) => r.status === "pending").length;
-  const shown = detail.recipients.filter((r) => filter === "all" || r.status === filter).slice(0, 200);
+  const matching = detail.recipients.filter((r) => matchesFilter(r, filter));
+  const shown = matching.slice(0, 200);
+  const filters: RecipientFilter[] = job.trackOpens
+    ? ["all", "sent", "opened", "not_opened", "failed", "skipped", "pending"]
+    : ["all", "sent", "failed", "skipped", "pending"];
   const busy = (action: string) => actionPending === job.id + action;
 
   return (
@@ -722,6 +779,12 @@ function JobDetailPanel({
             </button>
           )}
           <button
+            onClick={onRefresh}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <RefreshCw size={13} /> Refresh
+          </button>
+          <button
             onClick={() => downloadCsv(detail)}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
           >
@@ -731,13 +794,13 @@ function JobDetailPanel({
       </div>
 
       <div className="flex gap-1 text-xs">
-        {(["all", "sent", "failed", "skipped", "pending"] as const).map((f) => (
+        {filters.map((f) => (
           <button
             key={f}
             onClick={() => onFilter(f)}
             className={`rounded-md px-2.5 py-1 capitalize ${filter === f ? "bg-white font-medium text-slate-900 shadow-sm" : "text-slate-500"}`}
           >
-            {f}
+            {f.replace("_", " ")}
           </button>
         ))}
       </div>
@@ -755,13 +818,21 @@ function JobDetailPanel({
                 {r.status === "pending" && <Loader2 size={14} className="shrink-0 text-slate-300" />}
                 <span className="font-medium text-slate-800">{r.email}</span>
                 {r.name && <span className="text-slate-400">{r.name}</span>}
+                {r.openedAt && (
+                  <span
+                    className="flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700"
+                    title={`First opened ${formatDate(r.openedAt)}${r.lastOpenedAt ? ` · last ${formatDate(r.lastOpenedAt)}` : ""}`}
+                  >
+                    <MailOpen size={12} /> Opened{(r.openCount ?? 0) > 1 ? ` ×${r.openCount}` : ""}
+                  </span>
+                )}
                 {r.error && <span className="ml-auto truncate text-red-600" title={r.error}>{r.error}</span>}
               </li>
             ))}
           </ul>
         )}
       </div>
-      {detail.recipients.filter((r) => filter === "all" || r.status === filter).length > shown.length && (
+      {matching.length > shown.length && (
         <p className="text-xs text-slate-400">Showing the first 200 — export CSV for the full list.</p>
       )}
     </div>

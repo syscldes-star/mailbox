@@ -14,6 +14,7 @@ import { EmailSuppression } from "../models/EmailSuppression";
 import { sendEmail, SendError, type OutgoingEmail } from "./sender";
 import { htmlToText, renderTemplate, withUnsubscribeFooter } from "./template";
 import { unsubscribeUrl } from "./unsubscribe";
+import { openPixelUrl, withOpenPixel } from "./tracking";
 
 const CONCURRENCY = Math.max(1, Number(process.env.BULK_EMAIL_CONCURRENCY) || 5);
 const RATE_PER_SECOND = Math.max(1, Number(process.env.BULK_EMAIL_RATE_PER_SECOND) || 10);
@@ -35,10 +36,15 @@ export interface MessageSource {
 
 /** Renders the job's template for one recipient. Shared with the
  * "send test" route so a test email matches the real thing exactly. */
-export function buildMessage(source: MessageSource, recipient: Pick<IBulkRecipient, "email" | "name" | "vars">): OutgoingEmail {
+export function buildMessage(
+  source: MessageSource,
+  recipient: Pick<IBulkRecipient, "email" | "name" | "vars">,
+  openPixel?: string
+): OutgoingEmail {
   const unsubscribe = unsubscribeUrl(source.publicBaseUrl, source.workspaceId, recipient.email);
   const vars = { ...(recipient.vars ?? {}), email: recipient.email, name: recipient.name ?? "", unsubscribe_url: unsubscribe };
-  const html = renderTemplate(withUnsubscribeFooter(source.bodyHtml), vars, { html: true });
+  const rendered = renderTemplate(withUnsubscribeFooter(source.bodyHtml), vars, { html: true });
+  const html = openPixel ? withOpenPixel(rendered, openPixel) : rendered;
   return {
     from: { email: `${source.fromLocalPart}@${source.fromDomain}`, name: source.fromName },
     to: { email: recipient.email, name: recipient.name },
@@ -115,7 +121,8 @@ export async function processBulkJob(jobId: string): Promise<void> {
             update = { [`${path}.status`]: "skipped", [`${path}.error`]: "Unsubscribed" };
           } else {
             try {
-              const result = await sendWithRetry(buildMessage(job, r));
+              const pixel = job.trackOpens ? openPixelUrl(job.publicBaseUrl, jobId, index) : undefined;
+              const result = await sendWithRetry(buildMessage(job, r, pixel));
               update = result.suppressed
                 ? { [`${path}.status`]: "skipped", [`${path}.error`]: "On Oracle's suppression list (prior bounce or complaint)" }
                 : { [`${path}.status`]: "sent", [`${path}.messageId`]: result.messageId, [`${path}.sentAt`]: new Date() };
