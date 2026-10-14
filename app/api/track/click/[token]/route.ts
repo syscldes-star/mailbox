@@ -7,7 +7,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/mongodb";
-import { BulkEmailJob } from "@/lib/models/BulkEmailJob";
+import { incCounts } from "@/lib/models/BulkEmailJob";
+import { BulkRecipient } from "@/lib/models/BulkRecipient";
 import { verifyClickToken } from "@/lib/bulk-email/tracking";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
@@ -23,18 +24,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
 
   try {
     await connectToDatabase();
-    const path = `recipients.${parsed.index}`;
     const now = new Date();
-    const sent = { _id: parsed.jobId, [`${path}.status`]: "sent" };
-    await BulkEmailJob.updateOne(sent, {
-      $inc: { [`${path}.clickCount`]: 1 },
-      $set: { [`${path}.lastClickedAt`]: now },
-      $addToSet: { [`${path}.clickedLinks`]: url.slice(0, 2000) },
+    const sent = { jobId: parsed.jobId, index: parsed.index, status: "sent" };
+    await BulkRecipient.updateOne(sent, {
+      $inc: { clickCount: 1 },
+      $set: { lastClickedAt: now },
+      $addToSet: { clickedLinks: url.slice(0, 2000) },
     });
-    await BulkEmailJob.updateOne({ ...sent, [`${path}.clickedAt`]: null }, { $set: { [`${path}.clickedAt`]: now } });
+    const firstClick = await BulkRecipient.updateOne({ ...sent, clickedAt: null }, { $set: { clickedAt: now } });
     // A click proves the email was opened, even when the mail app
     // blocked the tracking pixel.
-    await BulkEmailJob.updateOne({ ...sent, [`${path}.openedAt`]: null }, { $set: { [`${path}.openedAt`]: now } });
+    const firstOpen = await BulkRecipient.updateOne({ ...sent, openedAt: null }, { $set: { openedAt: now } });
+    await incCounts(parsed.jobId, { clicked: firstClick.modifiedCount, opened: firstOpen.modifiedCount });
   } catch (err) {
     // Never block the person from reaching the link over a tracking error.
     console.error("[bulk-email] failed to record click", err);

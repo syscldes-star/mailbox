@@ -8,7 +8,7 @@
 import { Schema, type Document, type Model } from "mongoose";
 import { emailDb } from "../db/mongodb";
 
-export const MAX_CONTACTS_PER_LIST = 20000;
+export const MAX_CONTACTS_PER_LIST = 50000;
 
 export interface IContact {
   email: string;

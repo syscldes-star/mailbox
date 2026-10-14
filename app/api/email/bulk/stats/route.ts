@@ -15,8 +15,6 @@ import { EmailSuppression } from "@/lib/models/EmailSuppression";
 const ALLOWED_DAYS = [30, 90, 365];
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
-const countWhere = (cond: object) => ({ $size: { $filter: { input: "$recipients", cond } } });
-const isSet = (field: string) => ({ $ne: [{ $ifNull: [`$$this.${field}`, null] }, null] });
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth();
@@ -27,34 +25,11 @@ export async function GET(req: NextRequest) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
   const [jobs, unsubscribes] = await Promise.all([
-    BulkEmailJob.aggregate<{
-      _id: unknown;
-      subject: string;
-      createdAt: Date;
-      trackOpens?: boolean;
-      trackClicks?: boolean;
-      sent: number;
-      opened: number;
-      clicked: number;
-      bounced: number;
-      complained: number;
-    }>([
-      { $match: { workspaceId: auth.workspaceId, createdAt: { $gte: since }, status: { $ne: "scheduled" } } },
-      { $sort: { createdAt: -1 } },
-      {
-        $project: {
-          subject: 1,
-          createdAt: 1,
-          trackOpens: 1,
-          trackClicks: 1,
-          sent: countWhere({ $eq: ["$$this.status", "sent"] }),
-          opened: countWhere(isSet("openedAt")),
-          clicked: countWhere(isSet("clickedAt")),
-          bounced: countWhere({ $in: [{ $ifNull: ["$$this.deliveryIssue", null] }, ["bounced", "soft_bounced"]] }),
-          complained: countWhere({ $eq: ["$$this.deliveryIssue", "complained"] }),
-        },
-      },
-    ]),
+    BulkEmailJob.find({ workspaceId: auth.workspaceId, createdAt: { $gte: since }, status: { $nin: ["scheduled", "preparing"] } })
+      .sort({ createdAt: -1 })
+      .select("subject createdAt trackOpens trackClicks counts")
+      .lean()
+      .then((docs) => docs.map(({ counts, ...rest }) => ({ ...rest, ...counts }))),
     EmailSuppression.countDocuments({ workspaceId: auth.workspaceId, reason: "unsubscribed", createdAt: { $gte: since } }),
   ]);
 

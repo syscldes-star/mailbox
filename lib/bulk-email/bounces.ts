@@ -13,7 +13,8 @@
 import * as common from "oci-common";
 import * as email from "oci-email";
 import { connectToDatabase } from "../db/mongodb";
-import { BulkEmailJob } from "../models/BulkEmailJob";
+import { incCounts } from "../models/BulkEmailJob";
+import { BulkRecipient } from "../models/BulkRecipient";
 import { EmailSuppression } from "../models/EmailSuppression";
 import { SyncState } from "../models/SyncState";
 
@@ -90,22 +91,33 @@ async function runSync(): Promise<BounceSyncResult> {
     if (!issue || !address) continue;
     const at = entry.timeCreated ? new Date(entry.timeCreated) : new Date();
 
-    const recipientMatch = {
-      "r.email": address,
-      "r.status": "sent",
-      "r.sentAt": { $gte: new Date(at.getTime() - MATCH_WINDOW_MS), $lte: at },
-    };
-    const marked = await BulkEmailJob.updateMany(
-      { recipients: { $elemMatch: { email: address, status: "sent" } } },
-      { $set: { "recipients.$[r].deliveryIssue": issue, "recipients.$[r].deliveryIssueAt": at } },
-      { arrayFilters: [recipientMatch] }
-    );
-    result.recipientsMarked += marked.modifiedCount;
+    // Recipients this address was sent to shortly before Oracle reported
+    // it, not already marked. Each job's totals are bumped by its share.
+    const affected = await BulkRecipient.find({
+      email: address,
+      status: "sent",
+      sentAt: { $gte: new Date(at.getTime() - MATCH_WINDOW_MS), $lte: at },
+      deliveryIssue: null,
+    })
+      .select("_id jobId")
+      .lean();
+    if (affected.length > 0) {
+      const marked = await BulkRecipient.updateMany(
+        { _id: { $in: affected.map((r) => r._id) }, deliveryIssue: null },
+        { $set: { deliveryIssue: issue, deliveryIssueAt: at } }
+      );
+      result.recipientsMarked += marked.modifiedCount;
+      const perJob = new Map<string, number>();
+      for (const r of affected) perJob.set(String(r.jobId), (perJob.get(String(r.jobId)) ?? 0) + 1);
+      for (const [jobId, n] of perJob) {
+        await incCounts(jobId, issue === "complained" ? { complained: n } : { bounced: n });
+      }
+    }
 
     // Soft bounces (full mailbox, temporary outage) may succeed later,
     // so only hard bounces and complaints go on the do-not-email list.
     if (issue === "soft_bounced") continue;
-    const workspaceIds: string[] = await BulkEmailJob.distinct("workspaceId", { "recipients.email": address });
+    const workspaceIds: string[] = await BulkRecipient.distinct("workspaceId", { email: address });
     for (const workspaceId of workspaceIds) {
       const added = await EmailSuppression.updateOne(
         { workspaceId, email: address },

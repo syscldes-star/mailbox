@@ -6,7 +6,7 @@
 // "email, Name" / "Name <email>". Used client-side for the live count and
 // server-side again (never trust the browser's parse) before sending.
 
-export const MAX_RECIPIENTS_PER_JOB = 5000;
+export const MAX_RECIPIENTS_PER_JOB = 50000;
 
 export interface ParsedRecipient {
   email: string;

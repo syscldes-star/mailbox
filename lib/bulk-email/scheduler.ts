@@ -15,6 +15,7 @@
 import { connectToDatabase } from "../db/mongodb";
 import { resumeStaleJobs, startDueScheduledJobs } from "./process-job";
 import { syncBounces } from "./bounces";
+import { cleanupAbandonedUploads } from "./recipient-store";
 
 const TICK_MS = 60_000;
 const BOUNCE_SYNC_EVERY_TICKS = 15;
@@ -28,6 +29,7 @@ async function tick(count: number) {
   await startDueScheduledJobs();
   await resumeStaleJobs();
   if (count % BOUNCE_SYNC_EVERY_TICKS === 0) {
+    await cleanupAbandonedUploads();
     const result = await syncBounces();
     if (result.recipientsMarked || result.suppressionsAdded) {
       console.log(`[bulk-email] bounce sync: ${result.recipientsMarked} recipients marked, ${result.suppressionsAdded} suppressed`);

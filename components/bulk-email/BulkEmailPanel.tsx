@@ -126,6 +126,8 @@ interface ComposeDraft {
 }
 
 const DRAFT_STORAGE_KEY = "bulk-email-draft-v1";
+/** Recipients per upload request when starting a send. */
+const UPLOAD_BATCH = 2000;
 
 /** Value for a datetime-local input, in the browser's own timezone. */
 function toLocalInputValue(date: Date) {
@@ -226,6 +228,7 @@ export default function BulkEmailPanel() {
   const [testEmail, setTestEmail] = useState("");
   const [testing, setTesting] = useState(false);
   const [sending, setSending] = useState(false);
+  const [sendProgress, setSendProgress] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [composeError, setComposeError] = useState<string | null>(null);
   const [composeNotice, setComposeNotice] = useState<string | null>(null);
@@ -494,25 +497,38 @@ export default function BulkEmailPanel() {
     setSending(true);
     setComposeError(null);
     setComposeNotice(null);
+    let createdId: string | null = null;
     try {
-      const result = await apiPost<{ id: string; total: number }>("/api/email/bulk", {
+      // 1. Create the send, 2. upload recipients in batches (keeps every
+      // request small, whatever the list size), 3. start it.
+      const created = await apiPost<{ id: string }>("/api/email/bulk", {
         ...draftPayload(),
         trackOpens,
         trackClicks,
         scheduledAt: scheduleMode === "later" && scheduledLocal ? new Date(scheduledLocal).toISOString() : undefined,
-        recipients: parsed.recipients,
       });
+      createdId = created.id;
+      const all = parsed.recipients;
+      for (let i = 0; i < all.length; i += UPLOAD_BATCH) {
+        setSendProgress(`Uploading recipients… ${Math.min(i + UPLOAD_BATCH, all.length).toLocaleString()} of ${all.length.toLocaleString()}`);
+        await apiPost(`/api/email/bulk/${created.id}/recipients`, { recipients: all.slice(i, i + UPLOAD_BATCH) });
+      }
+      setSendProgress("Starting…");
+      await apiPatch(`/api/email/bulk/${created.id}`, { action: "start" });
       setConfirming(false);
       clearCompose();
       await refresh();
       setTab("history");
-      setExpandedId(result.id);
-      refreshDetail(result.id);
+      setExpandedId(created.id);
+      refreshDetail(created.id);
     } catch (err) {
+      // Don't leave a half-uploaded send behind.
+      if (createdId) apiPatch(`/api/email/bulk/${createdId}`, { action: "cancel" }).catch(() => {});
       setComposeError(err instanceof ApiError ? err.message : "Failed to start the send.");
       setConfirming(false);
     } finally {
       setSending(false);
+      setSendProgress(null);
     }
   }
 
@@ -1019,6 +1035,11 @@ export default function BulkEmailPanel() {
               </button>
             )}
           </div>
+          {sendProgress && (
+            <p className="flex items-center gap-2 text-sm text-indigo-700">
+              <Loader2 size={14} className="animate-spin" /> {sendProgress}
+            </p>
+          )}
           {composeError && <p className="text-sm text-red-600">{composeError}</p>}
           {composeNotice && <p className="text-sm text-emerald-600">{composeNotice}</p>}
         </div>

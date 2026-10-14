@@ -9,7 +9,8 @@
 
 import { waitUntil } from "@vercel/functions";
 import { connectToDatabase } from "../db/mongodb";
-import { BulkEmailJob, type IBulkRecipient } from "../models/BulkEmailJob";
+import { BulkEmailJob, incCounts, type JobCounts } from "../models/BulkEmailJob";
+import { BulkRecipient, type IBulkRecipient } from "../models/BulkRecipient";
 import { EmailSuppression } from "../models/EmailSuppression";
 import { sendEmail, SendError, type OutgoingEmail } from "./sender";
 import { htmlToText, renderTemplate, withFooter, withPreheader } from "./template";
@@ -19,6 +20,8 @@ import { clickTrackingUrl, openPixelUrl, rewriteLinks, withOpenPixel } from "./t
 const CONCURRENCY = Math.max(1, Number(process.env.BULK_EMAIL_CONCURRENCY) || 5);
 const RATE_PER_SECOND = Math.max(1, Number(process.env.BULK_EMAIL_RATE_PER_SECOND) || 10);
 const MAX_ATTEMPTS = 3;
+/** Recipients loaded per database round trip. */
+const BATCH_SIZE = 500;
 /** A "sending" job not touched for this long is assumed orphaned. Must
  * comfortably exceed the slowest single send including retries. */
 export const HEARTBEAT_STALE_MS = 2 * 60_000;
@@ -47,7 +50,7 @@ export interface MessageSource {
  * "send test" route so a test email matches the real thing exactly. */
 export function buildMessage(
   source: MessageSource,
-  recipient: Pick<IBulkRecipient, "email" | "name" | "vars">,
+  recipient: { email: string; name?: string; vars?: Record<string, string> },
   tracking: { openPixel?: string; wrapLink?: (url: string) => string } = {}
 ): OutgoingEmail {
   const unsubscribe = unsubscribeUrl(source.publicBaseUrl, source.workspaceId, recipient.email);
@@ -105,59 +108,66 @@ export async function processBulkJob(jobId: string): Promise<void> {
     const job = await BulkEmailJob.findById(jobId).lean();
     if (!job) return;
 
-    const pending = job.recipients
-      .map((r, index) => ({ r, index }))
-      .filter(({ r }) => r.status === "pending");
+    // Work through pending recipients a batch at a time, in list order.
+    // Each recipient leaves "pending" as soon as it's handled, so the
+    // next query naturally starts after it -- and a restarted worker
+    // picks up exactly where this one stopped.
+    for (;;) {
+      const batch = await BulkRecipient.find({ jobId: job._id, status: "pending" })
+        .sort({ index: 1 })
+        .limit(BATCH_SIZE)
+        .lean();
+      if (batch.length === 0) break;
 
-    const suppressed = new Map(
-      (
-        await EmailSuppression.find({
-          workspaceId: job.workspaceId,
-          email: { $in: pending.map(({ r }) => r.email) },
-        }).select("email reason")
-      ).map((s) => [s.email, s.reason])
-    );
-
-    for (let i = 0; i < pending.length; i += CONCURRENCY) {
-      const chunkStarted = Date.now();
-
-      // Checked between chunks so Cancel takes effect within a second
-      // or two rather than after the whole list.
-      const current = await BulkEmailJob.findById(jobId).select("status").lean();
-      if (current?.status !== "sending") return;
-
-      const chunk = pending.slice(i, i + CONCURRENCY);
-      await Promise.all(
-        chunk.map(async ({ r, index }) => {
-          const path = `recipients.${index}`;
-          let update: Record<string, unknown>;
-          const suppressedReason = suppressed.get(r.email);
-          if (suppressedReason) {
-            update = { [`${path}.status`]: "skipped", [`${path}.error`]: SKIP_REASON[suppressedReason] };
-          } else {
-            try {
-              const result = await sendWithRetry(
-                buildMessage(job, r, {
-                  openPixel: job.trackOpens ? openPixelUrl(job.publicBaseUrl, jobId, index) : undefined,
-                  wrapLink: job.trackClicks
-                    ? (url) => clickTrackingUrl(job.publicBaseUrl, jobId, index, url)
-                    : undefined,
-                })
-              );
-              update = result.suppressed
-                ? { [`${path}.status`]: "skipped", [`${path}.error`]: "On Oracle's suppression list (prior bounce or complaint)" }
-                : { [`${path}.status`]: "sent", [`${path}.messageId`]: result.messageId, [`${path}.sentAt`]: new Date() };
-            } catch (err) {
-              update = { [`${path}.status`]: "failed", [`${path}.error`]: (err instanceof Error ? err.message : String(err)).slice(0, 500) };
-            }
-          }
-          await BulkEmailJob.updateOne({ _id: jobId }, { $set: { ...update, heartbeatAt: new Date() } });
-        })
+      const suppressed = new Map(
+        (
+          await EmailSuppression.find({ workspaceId: job.workspaceId, email: { $in: batch.map((r) => r.email) } }).select("email reason")
+        ).map((s) => [s.email, s.reason])
       );
 
-      const minChunkMs = (chunk.length / RATE_PER_SECOND) * 1000;
-      const elapsed = Date.now() - chunkStarted;
-      if (elapsed < minChunkMs) await sleep(minChunkMs - elapsed);
+      for (let i = 0; i < batch.length; i += CONCURRENCY) {
+        const chunkStarted = Date.now();
+
+        // Checked between chunks so Cancel takes effect within a second
+        // or two rather than after the whole list.
+        const current = await BulkEmailJob.findById(jobId).select("status").lean();
+        if (current?.status !== "sending") return;
+
+        const chunk = batch.slice(i, i + CONCURRENCY);
+        const delta: Partial<JobCounts> = {};
+        const bump = (key: keyof JobCounts) => (delta[key] = (delta[key] ?? 0) + 1);
+
+        await Promise.all(
+          chunk.map(async (r) => {
+            let update: Partial<IBulkRecipient>;
+            const suppressedReason = suppressed.get(r.email);
+            if (suppressedReason) {
+              update = { status: "skipped", error: SKIP_REASON[suppressedReason] };
+            } else {
+              try {
+                const result = await sendWithRetry(
+                  buildMessage(job, r, {
+                    openPixel: job.trackOpens ? openPixelUrl(job.publicBaseUrl, jobId, r.index) : undefined,
+                    wrapLink: job.trackClicks ? (url) => clickTrackingUrl(job.publicBaseUrl, jobId, r.index, url) : undefined,
+                  })
+                );
+                update = result.suppressed
+                  ? { status: "skipped", error: "On Oracle's suppression list (prior bounce or complaint)" }
+                  : { status: "sent", messageId: result.messageId, sentAt: new Date() };
+              } catch (err) {
+                update = { status: "failed", error: (err instanceof Error ? err.message : String(err)).slice(0, 500) };
+              }
+            }
+            const written = await BulkRecipient.updateOne({ _id: r._id, status: "pending" }, { $set: update });
+            if (written.modifiedCount === 1) bump(update.status as keyof JobCounts);
+          })
+        );
+        await incCounts(jobId, delta, { heartbeatAt: new Date() });
+
+        const minChunkMs = (chunk.length / RATE_PER_SECOND) * 1000;
+        const elapsed = Date.now() - chunkStarted;
+        if (elapsed < minChunkMs) await sleep(minChunkMs - elapsed);
+      }
     }
 
     await BulkEmailJob.updateOne(

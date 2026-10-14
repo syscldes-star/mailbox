@@ -1,41 +1,30 @@
 // lib/models/BulkEmailJob.ts
 //
-// One bulk send ("campaign" in the loose sense) -- the message itself
-// plus every recipient and their individual delivery outcome. Recipients
-// are embedded rather than a separate collection: jobs are capped at
-// MAX_RECIPIENTS_PER_JOB, which keeps the document comfortably under
-// Mongo's 16MB limit while letting progress updates stay a single
-// atomic write per recipient.
+// One bulk send -- the message, its settings and running totals. The
+// recipients themselves live in the BulkRecipient collection; `counts`
+// is kept up to date as they're sent, opened and clicked, so listing
+// sends never has to scan every recipient.
 
 import { Schema, type Document, type Model } from "mongoose";
 import { emailDb } from "../db/mongodb";
 
-export type BulkJobStatus = "scheduled" | "sending" | "completed" | "cancelled" | "failed";
-export type RecipientStatus = "pending" | "sent" | "failed" | "skipped";
+export type { IBulkRecipient, RecipientStatus } from "./BulkRecipient";
 
-export interface IBulkRecipient {
-  email: string;
-  name?: string;
-  vars?: Record<string, string>;
-  status: RecipientStatus;
-  error?: string;
-  messageId?: string;
-  sentAt?: Date;
-  /** First time the tracking pixel loaded -- i.e. first open. */
-  openedAt?: Date;
-  lastOpenedAt?: Date;
-  openCount?: number;
-  /** First tracked link click. */
-  clickedAt?: Date;
-  lastClickedAt?: Date;
-  clickCount?: number;
-  /** Distinct destination URLs this recipient clicked. */
-  clickedLinks?: string[];
-  /** Set by the bounce/complaint sync when Oracle reports a problem
-   * after the email was accepted. */
-  deliveryIssue?: "bounced" | "soft_bounced" | "complained";
-  deliveryIssueAt?: Date;
+/** "preparing": created, recipients still being uploaded in batches. */
+export type BulkJobStatus = "preparing" | "scheduled" | "sending" | "completed" | "cancelled" | "failed";
+
+export interface JobCounts {
+  total: number;
+  sent: number;
+  failed: number;
+  skipped: number;
+  opened: number;
+  clicked: number;
+  bounced: number;
+  complained: number;
 }
+
+export const EMPTY_COUNTS: JobCounts = { total: 0, sent: 0, failed: 0, skipped: 0, opened: 0, clicked: 0, bounced: 0, complained: 0 };
 
 export interface IBulkEmailJob extends Document {
   workspaceId: string;
@@ -57,7 +46,7 @@ export interface IBulkEmailJob extends Document {
   publicBaseUrl: string;
   /** Snapshot of the workspace's postal address at send time. */
   postalAddress?: string;
-  recipients: IBulkRecipient[];
+  counts: JobCounts;
   status: BulkJobStatus;
   /** When a "scheduled" job should start sending. */
   scheduledAt?: Date;
@@ -71,24 +60,16 @@ export interface IBulkEmailJob extends Document {
   updatedAt: Date;
 }
 
-const RecipientSchema = new Schema<IBulkRecipient>(
+const CountsSchema = new Schema<JobCounts>(
   {
-    email: { type: String, required: true, lowercase: true, trim: true },
-    name: String,
-    vars: { type: Schema.Types.Mixed },
-    status: { type: String, enum: ["pending", "sent", "failed", "skipped"], default: "pending" },
-    error: String,
-    messageId: String,
-    sentAt: Date,
-    openedAt: Date,
-    lastOpenedAt: Date,
-    openCount: Number,
-    clickedAt: Date,
-    lastClickedAt: Date,
-    clickCount: Number,
-    clickedLinks: { type: [String], default: undefined },
-    deliveryIssue: { type: String, enum: ["bounced", "soft_bounced", "complained"] },
-    deliveryIssueAt: Date,
+    total: { type: Number, default: 0 },
+    sent: { type: Number, default: 0 },
+    failed: { type: Number, default: 0 },
+    skipped: { type: Number, default: 0 },
+    opened: { type: Number, default: 0 },
+    clicked: { type: Number, default: 0 },
+    bounced: { type: Number, default: 0 },
+    complained: { type: Number, default: 0 },
   },
   { _id: false }
 );
@@ -108,11 +89,11 @@ const BulkEmailJobSchema = new Schema<IBulkEmailJob>(
     trackClicks: { type: Boolean, default: false },
     publicBaseUrl: { type: String, required: true },
     postalAddress: String,
-    recipients: { type: [RecipientSchema], default: [] },
+    counts: { type: CountsSchema, default: () => ({ ...EMPTY_COUNTS }) },
     status: {
       type: String,
-      enum: ["scheduled", "sending", "completed", "cancelled", "failed"],
-      default: "sending",
+      enum: ["preparing", "scheduled", "sending", "completed", "cancelled", "failed"],
+      default: "preparing",
       index: true,
     },
     scheduledAt: Date,
@@ -123,9 +104,16 @@ const BulkEmailJobSchema = new Schema<IBulkEmailJob>(
   { timestamps: true }
 );
 
-// The bounce sync looks recipients up by address across all jobs.
-BulkEmailJobSchema.index({ "recipients.email": 1 });
-
 const db = emailDb();
 export const BulkEmailJob: Model<IBulkEmailJob> =
   (db.models.BulkEmailJob as Model<IBulkEmailJob> | undefined) ?? db.model<IBulkEmailJob>("BulkEmailJob", BulkEmailJobSchema);
+
+/** Adjusts a job's running totals, e.g. incCounts(id, { sent: 1 }). */
+export function incCounts(jobId: unknown, delta: Partial<JobCounts>, extra: Record<string, unknown> = {}) {
+  const inc = Object.fromEntries(Object.entries(delta).filter(([, v]) => v).map(([k, v]) => [`counts.${k}`, v]));
+  if (Object.keys(inc).length === 0 && Object.keys(extra).length === 0) return Promise.resolve();
+  return BulkEmailJob.updateOne(
+    { _id: jobId },
+    { ...(Object.keys(inc).length ? { $inc: inc } : {}), ...(Object.keys(extra).length ? { $set: extra } : {}) }
+  );
+}
