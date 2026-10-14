@@ -5,9 +5,12 @@
 // so a plain interval is enough -- no external cron needed.
 //
 // Every minute: start scheduled sends that are due, pick A/B test
-// winners whose waiting time is over, and restart sends whose worker died. Every 15 minutes: sync
-// bounces and spam complaints from Oracle. Set BULK_EMAIL_SCHEDULER=off
-// to disable (e.g. on a second process sharing the same database).
+// winners whose waiting time is over, and restart sends whose worker
+// died. Every 15 minutes: sync bounces and spam complaints from Oracle.
+//
+// Runs only in production by default: a local `next dev` usually points
+// at the same database, and shouldn't start real sends from a laptop.
+// BULK_EMAIL_SCHEDULER=on forces it on, =off forces it off.
 
 import { connectToDatabase } from "../db/mongodb";
 import { decideDueAbTests, resumeStaleJobs, startDueScheduledJobs } from "./process-job";
