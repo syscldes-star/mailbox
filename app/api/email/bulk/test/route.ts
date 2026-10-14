@@ -10,6 +10,7 @@ import { apiSuccess, apiError } from "@/lib/api/response";
 import { isValidEmail } from "@/lib/bulk-email/recipients";
 import { buildMessage } from "@/lib/bulk-email/process-job";
 import { sendEmail } from "@/lib/bulk-email/sender";
+import { getEmailSettings } from "@/lib/bulk-email/settings";
 import { LOCAL_PART_PATTERN, MIN_SEND_ROLE, loadSenderDomains, publicBaseUrl } from "@/lib/bulk-email/access";
 
 export async function POST(req: NextRequest) {
@@ -49,6 +50,7 @@ export async function POST(req: NextRequest) {
       subject: `[Test] ${subject}`,
       bodyHtml,
       publicBaseUrl: publicBaseUrl(req),
+      postalAddress: (await getEmailSettings(auth.workspaceId)).postalAddress,
     },
     // Rendered with the sample recipient's data, but delivered to the
     // test address -- and the unsubscribe link targets the test address

@@ -31,6 +31,10 @@ export interface IBulkRecipient {
   clickCount?: number;
   /** Distinct destination URLs this recipient clicked. */
   clickedLinks?: string[];
+  /** Set by the bounce/complaint sync when Oracle reports a problem
+   * after the email was accepted. */
+  deliveryIssue?: "bounced" | "soft_bounced" | "complained";
+  deliveryIssueAt?: Date;
 }
 
 export interface IBulkEmailJob extends Document {
@@ -49,6 +53,8 @@ export interface IBulkEmailJob extends Document {
   /** Absolute base URL unsubscribe links point at, captured at creation
    * time since the background worker has no request to derive it from. */
   publicBaseUrl: string;
+  /** Snapshot of the workspace's postal address at send time. */
+  postalAddress?: string;
   recipients: IBulkRecipient[];
   status: BulkJobStatus;
   /** Last time a worker touched this job. A "sending" job whose
@@ -77,6 +83,8 @@ const RecipientSchema = new Schema<IBulkRecipient>(
     lastClickedAt: Date,
     clickCount: Number,
     clickedLinks: { type: [String], default: undefined },
+    deliveryIssue: { type: String, enum: ["bounced", "soft_bounced", "complained"] },
+    deliveryIssueAt: Date,
   },
   { _id: false }
 );
@@ -94,6 +102,7 @@ const BulkEmailJobSchema = new Schema<IBulkEmailJob>(
     trackOpens: { type: Boolean, default: false },
     trackClicks: { type: Boolean, default: false },
     publicBaseUrl: { type: String, required: true },
+    postalAddress: String,
     recipients: { type: [RecipientSchema], default: [] },
     status: {
       type: String,
@@ -107,6 +116,9 @@ const BulkEmailJobSchema = new Schema<IBulkEmailJob>(
   },
   { timestamps: true }
 );
+
+// The bounce sync looks recipients up by address across all jobs.
+BulkEmailJobSchema.index({ "recipients.email": 1 });
 
 const db = emailDb();
 export const BulkEmailJob: Model<IBulkEmailJob> =

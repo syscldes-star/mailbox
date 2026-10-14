@@ -11,6 +11,7 @@ import { apiSuccess, apiError } from "@/lib/api/response";
 import { BulkEmailJob } from "@/lib/models/BulkEmailJob";
 import { isValidEmail, MAX_RECIPIENTS_PER_JOB } from "@/lib/bulk-email/recipients";
 import { resumeStaleJobs, startBulkJob } from "@/lib/bulk-email/process-job";
+import { getEmailSettings, recipientsQueuedLast24h } from "@/lib/bulk-email/settings";
 import { LOCAL_PART_PATTERN, MIN_SEND_ROLE, loadSenderDomains, publicBaseUrl } from "@/lib/bulk-email/access";
 
 export async function GET() {
@@ -19,8 +20,10 @@ export async function GET() {
 
   await resumeStaleJobs(auth.workspaceId);
 
-  const [senders, jobs] = await Promise.all([
+  const [senders, settings, usedLast24h, jobs] = await Promise.all([
     loadSenderDomains(auth.workspaceId),
+    getEmailSettings(auth.workspaceId),
+    recipientsQueuedLast24h(auth.workspaceId),
     BulkEmailJob.aggregate([
       { $match: { workspaceId: auth.workspaceId } },
       { $sort: { createdAt: -1 } },
@@ -49,6 +52,17 @@ export async function GET() {
               $filter: { input: "$recipients", cond: { $ne: [{ $ifNull: ["$$this.clickedAt", null] }, null] } },
             },
           },
+          bounced: {
+            $size: {
+              $filter: {
+                input: "$recipients",
+                cond: { $in: [{ $ifNull: ["$$this.deliveryIssue", null] }, ["bounced", "soft_bounced"]] },
+              },
+            },
+          },
+          complained: {
+            $size: { $filter: { input: "$recipients", cond: { $eq: ["$$this.deliveryIssue", "complained"] } } },
+          },
           trackOpens: 1,
           trackClicks: 1,
         },
@@ -59,6 +73,8 @@ export async function GET() {
   return apiSuccess({
     senders,
     canSend: hasMinimumRole(auth.membership.role, MIN_SEND_ROLE),
+    settings,
+    usage: { usedLast24h, dailyLimit: settings.dailyLimit },
     jobs: jobs.map(({ _id, ...rest }) => ({ id: String(_id), ...rest })),
   });
 }
@@ -124,6 +140,23 @@ export async function POST(req: NextRequest) {
     return apiError(`A single send is limited to ${MAX_RECIPIENTS_PER_JOB} recipients.`, 400);
   }
 
+  const settings = await getEmailSettings(auth.workspaceId);
+  if (!settings.postalAddress) {
+    return apiError(
+      "Add your business postal address in Bulk Email → Settings first. Anti-spam laws require it in marketing email.",
+      400
+    );
+  }
+  const used = await recipientsQueuedLast24h(auth.workspaceId);
+  if (used + recipients.length > settings.dailyLimit) {
+    const left = Math.max(0, settings.dailyLimit - used);
+    return apiError(
+      `This would exceed your daily limit of ${settings.dailyLimit.toLocaleString()} recipients ` +
+        `(${used.toLocaleString()} used in the last 24 hours, ${left.toLocaleString()} left).`,
+      429
+    );
+  }
+
   const job = await BulkEmailJob.create({
     workspaceId: auth.workspaceId,
     createdBy: auth.userId,
@@ -136,6 +169,7 @@ export async function POST(req: NextRequest) {
     trackOpens: body.trackOpens !== false,
     trackClicks: body.trackClicks !== false,
     publicBaseUrl: publicBaseUrl(req),
+    postalAddress: settings.postalAddress,
     recipients,
     status: "sending",
   });

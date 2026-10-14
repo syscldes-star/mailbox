@@ -23,7 +23,9 @@ import {
 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, ApiError } from "@/lib/api/client";
 import { parseRecipients, MAX_RECIPIENTS_PER_JOB, type ParseResult } from "@/lib/bulk-email/recipients";
-import { extractTags, renderTemplate, withUnsubscribeFooter } from "@/lib/bulk-email/template";
+import { extractTags, renderTemplate, withFooter } from "@/lib/bulk-email/template";
+import SettingsTab from "@/components/bulk-email/SettingsTab";
+import UnsubscribesTab from "@/components/bulk-email/UnsubscribesTab";
 
 interface SenderDomain {
   domain: string;
@@ -46,6 +48,8 @@ interface JobSummary {
   skipped: number;
   opened: number;
   clicked: number;
+  bounced: number;
+  complained: number;
   trackOpens?: boolean;
   trackClicks?: boolean;
 }
@@ -63,9 +67,11 @@ interface JobRecipient {
   lastClickedAt?: string;
   clickCount?: number;
   clickedLinks?: string[];
+  deliveryIssue?: "bounced" | "soft_bounced" | "complained";
+  deliveryIssueAt?: string;
 }
 
-interface JobDetail extends Omit<JobSummary, "total" | "sent" | "failed" | "skipped" | "opened" | "clicked"> {
+interface JobDetail extends Omit<JobSummary, "total" | "sent" | "failed" | "skipped" | "opened" | "clicked" | "bounced" | "complained"> {
   recipients: JobRecipient[];
 }
 
@@ -73,15 +79,27 @@ interface ListResponse {
   senders: SenderDomain[];
   canSend: boolean;
   jobs: JobSummary[];
+  settings: { postalAddress: string; dailyLimit: number };
+  usage: { usedLast24h: number; dailyLimit: number };
 }
 
-type RecipientFilter = "all" | JobRecipient["status"] | "opened" | "not_opened" | "clicked";
+type Tab = "compose" | "history" | "unsubscribes" | "settings";
+
+const TAB_LABEL: Record<Tab, string> = {
+  compose: "Compose",
+  history: "History",
+  unsubscribes: "Unsubscribes",
+  settings: "Settings",
+};
+
+type RecipientFilter = "all" | JobRecipient["status"] | "opened" | "not_opened" | "clicked" | "bounced";
 
 function matchesFilter(r: JobRecipient, filter: RecipientFilter) {
   if (filter === "all") return true;
   if (filter === "opened") return !!r.openedAt;
   if (filter === "not_opened") return r.status === "sent" && !r.openedAt;
   if (filter === "clicked") return !!r.clickedAt;
+  if (filter === "bounced") return !!r.deliveryIssue;
   return r.status === filter;
 }
 
@@ -107,7 +125,7 @@ function formatDate(iso?: string) {
 function downloadCsv(job: JobDetail) {
   const escape = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
   const lines = [
-    "email,name,status,error,sent_at,opened_at,open_count,clicked_at,click_count,clicked_links",
+    "email,name,status,error,sent_at,opened_at,open_count,clicked_at,click_count,clicked_links,delivery_issue",
     ...job.recipients.map((r) =>
       [
         r.email,
@@ -120,6 +138,7 @@ function downloadCsv(job: JobDetail) {
         r.clickedAt ?? "",
         String(r.clickCount ?? 0),
         (r.clickedLinks ?? []).join(" "),
+        r.deliveryIssue ?? "",
       ]
         .map(escape)
         .join(",")
@@ -134,7 +153,7 @@ function downloadCsv(job: JobDetail) {
 }
 
 export default function BulkEmailPage() {
-  const [tab, setTab] = useState<"compose" | "history">("compose");
+  const [tab, setTab] = useState<Tab>("compose");
   const [data, setData] = useState<ListResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -233,12 +252,15 @@ export default function BulkEmailPage() {
 
   const sample = parsed.recipients[0] ?? { email: "recipient@example.com", name: "Alex", vars: {} };
   const previewVars = { ...sample.vars, email: sample.email, name: sample.name ?? "", unsubscribe_url: "#" };
-  const previewHtml = renderTemplate(withUnsubscribeFooter(bodyHtml), previewVars, { html: true });
+  const previewHtml = renderTemplate(withFooter(bodyHtml, data?.settings.postalAddress), previewVars, { html: true });
   const previewSubject = renderTemplate(subject, previewVars, { html: false });
 
   const tooMany = parsed.recipients.length > MAX_RECIPIENTS_PER_JOB;
   const canSend = data?.canSend ?? false;
   const noSenders = data !== null && data.senders.length === 0;
+  const missingAddress = data !== null && !data.settings.postalAddress;
+  const remainingToday = data ? Math.max(0, data.usage.dailyLimit - data.usage.usedLast24h) : Infinity;
+  const overLimit = parsed.recipients.length > remainingToday;
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -329,7 +351,9 @@ export default function BulkEmailPage() {
     !!subject.trim() &&
     !!bodyHtml.trim() &&
     parsed.recipients.length > 0 &&
-    !tooMany;
+    !tooMany &&
+    !overLimit &&
+    !missingAddress;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -341,21 +365,21 @@ export default function BulkEmailPage() {
             Send a personalised email to a list of recipients from one of your domains.
           </p>
         </div>
-        <div className="flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
-          {(["compose", "history"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={
-                tab === t
-                  ? "rounded-md bg-indigo-600 px-4 py-1.5 text-sm font-medium text-white"
-                  : "rounded-md px-4 py-1.5 text-sm font-medium text-slate-600 hover:text-slate-900"
-              }
-            >
-              {t === "compose" ? "Compose" : `History${anySending ? " •" : ""}`}
-            </button>
-          ))}
-        </div>
+      </div>
+
+      <div className="-mx-1 flex gap-1 overflow-x-auto border-b border-slate-200 px-1">
+        {(Object.keys(TAB_LABEL) as Tab[]).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+              tab === t ? "border-indigo-600 text-indigo-700" : "border-transparent text-slate-500 hover:text-slate-900"
+            }`}
+          >
+            {TAB_LABEL[t]}
+            {t === "history" && anySending ? " •" : ""}
+          </button>
+        ))}
       </div>
 
       {loadError && <p className="text-sm text-red-600">{loadError}</p>}
@@ -367,6 +391,17 @@ export default function BulkEmailPage() {
               <AlertTriangle size={16} className="mt-0.5 shrink-0" />
               No domain is ready to send from yet. A domain can send once its &quot;Approved sender&quot; step is
               complete on the Domains page.
+            </div>
+          )}
+          {missingAddress && (
+            <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+              <span>
+                Add your business postal address before sending -- anti-spam laws require it in marketing email.{" "}
+                <button onClick={() => setTab("settings")} className="font-medium underline">
+                  Open Settings
+                </button>
+              </span>
             </div>
           )}
           {data && !canSend && (
@@ -459,6 +494,13 @@ export default function BulkEmailPage() {
               {parsed.invalid.length > 0 && (
                 <span className="text-amber-700" title={parsed.invalid.slice(0, 20).join("\n")}>
                   {parsed.invalid.length} invalid line{parsed.invalid.length === 1 ? "" : "s"} ignored
+                </span>
+              )}
+              {data && (
+                <span className={overLimit ? "text-red-600" : "text-slate-500"}>
+                  {overLimit
+                    ? `Over your daily limit -- ${remainingToday.toLocaleString()} recipients left in the last 24 hours.`
+                    : `${remainingToday.toLocaleString()} of ${data.usage.dailyLimit.toLocaleString()} daily sends left`}
                 </span>
               )}
               {tooMany && (
@@ -692,7 +734,10 @@ export default function BulkEmailPage() {
                             <p className="mt-1 text-xs text-slate-500">
                               {job.sent.toLocaleString()} sent
                               {job.failed > 0 && <span className="text-red-600"> · {job.failed} failed</span>}
-                              {job.skipped > 0 && <span> · {job.skipped} skipped</span>} / {job.total.toLocaleString()}
+                              {job.skipped > 0 && <span> · {job.skipped} skipped</span>}
+                              {job.bounced > 0 && <span className="text-red-600"> · {job.bounced} bounced</span>}
+                              {job.complained > 0 && <span className="text-amber-700"> · {job.complained} spam</span>} /{" "}
+                              {job.total.toLocaleString()}
                             </p>
                           </td>
                           <td className="whitespace-nowrap px-3 py-3 text-xs">
@@ -755,6 +800,9 @@ export default function BulkEmailPage() {
           </div>
         </div>
       )}
+
+      {tab === "unsubscribes" && <UnsubscribesTab />}
+      {tab === "settings" && <SettingsTab onSaved={refresh} />}
     </div>
   );
 }
@@ -788,6 +836,7 @@ function JobDetailPanel({
     "sent",
     ...(job.trackOpens ? (["opened", "not_opened"] as const) : []),
     ...(job.trackClicks ? (["clicked"] as const) : []),
+    ...(detail.recipients.some((r) => r.deliveryIssue) ? (["bounced"] as const) : []),
     "failed",
     "skipped",
     "pending",
@@ -857,7 +906,7 @@ function JobDetailPanel({
             onClick={() => onFilter(f)}
             className={`rounded-md px-2.5 py-1 capitalize ${filter === f ? "bg-white font-medium text-slate-900 shadow-sm" : "text-slate-500"}`}
           >
-            {f.replace("_", " ")}
+            {f === "bounced" ? "bounced / spam" : f.replace("_", " ")}
           </button>
         ))}
       </div>
@@ -899,6 +948,14 @@ function JobDetailPanel({
                     title={`First opened ${formatDate(r.openedAt)}${r.lastOpenedAt ? ` · last ${formatDate(r.lastOpenedAt)}` : ""}`}
                   >
                     <MailOpen size={12} /> Opened{(r.openCount ?? 0) > 1 ? ` ×${r.openCount}` : ""}
+                  </span>
+                )}
+                {r.deliveryIssue && (
+                  <span
+                    className={`rounded-full px-2 py-0.5 ${r.deliveryIssue === "complained" ? "bg-amber-50 text-amber-800" : "bg-red-50 text-red-700"}`}
+                    title={r.deliveryIssueAt ? `Reported ${formatDate(r.deliveryIssueAt)}` : undefined}
+                  >
+                    {r.deliveryIssue === "bounced" ? "Bounced" : r.deliveryIssue === "soft_bounced" ? "Soft bounce" : "Spam complaint"}
                   </span>
                 )}
                 {r.clickedAt && (

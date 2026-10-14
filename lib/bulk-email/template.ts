@@ -58,16 +58,26 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
-/** Appended to every bulk email unless the body already places
- * {{unsubscribe_url}} itself. */
-export function unsubscribeFooterHtml(): string {
+/** Footer appended to every bulk email: the sender's postal address
+ * (required in marketing email by CAN-SPAM and similar laws) and an
+ * unsubscribe link, unless the body already places {{unsubscribe_url}}
+ * itself. */
+export function emailFooterHtml(options: { postalAddress?: string; includeUnsubscribe: boolean }): string {
+  const parts: string[] = [];
+  if (options.includeUnsubscribe) {
+    parts.push('Don\'t want these emails? <a href="{{unsubscribe_url}}" style="color:#94a3b8;">Unsubscribe</a>.');
+  }
+  const address = options.postalAddress?.trim();
+  if (address) parts.push(escapeHtml(address).replace(/\r?\n/g, "<br>"));
+  if (parts.length === 0) return "";
   return (
-    '<p style="margin-top:32px;font-size:12px;color:#94a3b8;font-family:sans-serif;">' +
-    'Don\'t want these emails? <a href="{{unsubscribe_url}}" style="color:#94a3b8;">Unsubscribe</a>.' +
+    '<p style="margin-top:32px;font-size:12px;line-height:1.5;color:#94a3b8;font-family:sans-serif;">' +
+    parts.join("<br><br>") +
     "</p>"
   );
 }
 
-export function withUnsubscribeFooter(bodyHtml: string): string {
-  return /\{\{\s*unsubscribe_url\s*\}\}/i.test(bodyHtml) ? bodyHtml : bodyHtml + unsubscribeFooterHtml();
+export function withFooter(bodyHtml: string, postalAddress?: string): string {
+  const includeUnsubscribe = !/\{\{\s*unsubscribe_url\s*\}\}/i.test(bodyHtml);
+  return bodyHtml + emailFooterHtml({ postalAddress, includeUnsubscribe });
 }

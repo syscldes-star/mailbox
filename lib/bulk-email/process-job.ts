@@ -12,7 +12,7 @@ import { connectToDatabase } from "../db/mongodb";
 import { BulkEmailJob, type IBulkRecipient } from "../models/BulkEmailJob";
 import { EmailSuppression } from "../models/EmailSuppression";
 import { sendEmail, SendError, type OutgoingEmail } from "./sender";
-import { htmlToText, renderTemplate, withUnsubscribeFooter } from "./template";
+import { htmlToText, renderTemplate, withFooter } from "./template";
 import { unsubscribeUrl } from "./unsubscribe";
 import { clickTrackingUrl, openPixelUrl, rewriteLinks, withOpenPixel } from "./tracking";
 
@@ -23,6 +23,13 @@ const MAX_ATTEMPTS = 3;
  * comfortably exceed the slowest single send including retries. */
 export const HEARTBEAT_STALE_MS = 2 * 60_000;
 
+const SKIP_REASON: Record<string, string> = {
+  unsubscribed: "Unsubscribed",
+  bounced: "Bounced on an earlier send",
+  complained: "Marked an earlier email as spam",
+  manual: "On your do-not-email list",
+};
+
 export interface MessageSource {
   workspaceId: string;
   fromDomain: string;
@@ -32,6 +39,7 @@ export interface MessageSource {
   subject: string;
   bodyHtml: string;
   publicBaseUrl: string;
+  postalAddress?: string;
 }
 
 /** Renders the job's template for one recipient. Shared with the
@@ -43,7 +51,7 @@ export function buildMessage(
 ): OutgoingEmail {
   const unsubscribe = unsubscribeUrl(source.publicBaseUrl, source.workspaceId, recipient.email);
   const vars = { ...(recipient.vars ?? {}), email: recipient.email, name: recipient.name ?? "", unsubscribe_url: unsubscribe };
-  const rendered = renderTemplate(withUnsubscribeFooter(source.bodyHtml), vars, { html: true });
+  const rendered = renderTemplate(withFooter(source.bodyHtml, source.postalAddress), vars, { html: true });
   // Links are wrapped after rendering so merge tags inside URLs are
   // already filled in; the unsubscribe link is never wrapped.
   const linked = tracking.wrapLink
@@ -100,13 +108,13 @@ export async function processBulkJob(jobId: string): Promise<void> {
       .map((r, index) => ({ r, index }))
       .filter(({ r }) => r.status === "pending");
 
-    const suppressed = new Set(
+    const suppressed = new Map(
       (
         await EmailSuppression.find({
           workspaceId: job.workspaceId,
           email: { $in: pending.map(({ r }) => r.email) },
-        }).select("email")
-      ).map((s) => s.email)
+        }).select("email reason")
+      ).map((s) => [s.email, s.reason])
     );
 
     for (let i = 0; i < pending.length; i += CONCURRENCY) {
@@ -122,8 +130,9 @@ export async function processBulkJob(jobId: string): Promise<void> {
         chunk.map(async ({ r, index }) => {
           const path = `recipients.${index}`;
           let update: Record<string, unknown>;
-          if (suppressed.has(r.email)) {
-            update = { [`${path}.status`]: "skipped", [`${path}.error`]: "Unsubscribed" };
+          const suppressedReason = suppressed.get(r.email);
+          if (suppressedReason) {
+            update = { [`${path}.status`]: "skipped", [`${path}.error`]: SKIP_REASON[suppressedReason] };
           } else {
             try {
               const result = await sendWithRetry(
@@ -169,12 +178,12 @@ export function startBulkJob(jobId: string): void {
   waitUntil(processBulkJob(jobId).catch((err) => console.error(`[bulk-email] job ${jobId} crashed`, err)));
 }
 
-/** Restarts workers for any of the workspace's jobs whose worker has
- * died. Called from the list/detail routes, so simply having the panel
- * open is enough to recover an interrupted send. */
-export async function resumeStaleJobs(workspaceId: string): Promise<void> {
+/** Restarts workers for any jobs (optionally just one workspace's) whose
+ * worker has died. Called by the scheduler every minute, and from the
+ * list/detail routes so opening the panel also recovers a stuck send. */
+export async function resumeStaleJobs(workspaceId?: string): Promise<void> {
   const stale = await BulkEmailJob.find({
-    workspaceId,
+    ...(workspaceId ? { workspaceId } : {}),
     status: "sending",
     $or: [{ heartbeatAt: null }, { heartbeatAt: { $lt: new Date(Date.now() - HEARTBEAT_STALE_MS) } }],
   }).select("_id");
