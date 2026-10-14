@@ -21,6 +21,7 @@ export const navigation: NavigationItem[] = [
           children: [
             { id: "domains", title: "Domains", href: "/domains" },
             { id: "mailboxes", title: "Mailboxes", href: "/mailboxes" },
+            { id: "bulk-email", title: "Bulk Email", href: "/bulk-email" },
           ],
         },
         {
