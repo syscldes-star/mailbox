@@ -24,7 +24,13 @@ interface FullList extends Omit<ListSummary, "count"> {
   contacts: Contact[];
 }
 
-export default function ListsTab({ onUse }: { onUse: (csv: string, notice: string) => void }) {
+export default function ListsTab({
+  onUse,
+  onOpenContact,
+}: {
+  onUse: (csv: string, notice: string) => void;
+  onOpenContact: (email: string) => void;
+}) {
   const [lists, setLists] = useState<ListSummary[] | null>(null);
   const [canManage, setCanManage] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +40,7 @@ export default function ListsTab({ onUse }: { onUse: (csv: string, notice: strin
   const [newText, setNewText] = useState("");
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState<FullList | null>(null);
+  const [lookup, setLookup] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
 
   async function load() {
@@ -89,6 +96,7 @@ export default function ListsTab({ onUse }: { onUse: (csv: string, notice: strin
         }}
         onChanged={() => openList(open.id)}
         onUse={onUse}
+        onOpenContact={onOpenContact}
       />
     );
   }
@@ -103,6 +111,26 @@ export default function ListsTab({ onUse }: { onUse: (csv: string, notice: strin
           </button>
         )}
       </div>
+
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (lookup.trim()) onOpenContact(lookup.trim().toLowerCase());
+        }}
+        className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm"
+      >
+        <Search size={16} className="text-slate-400" />
+        <input
+          value={lookup}
+          onChange={(e) => setLookup(e.target.value)}
+          type="email"
+          placeholder="Look up a contact by email address…"
+          className="w-full text-sm outline-none placeholder:text-slate-400"
+        />
+        <button type="submit" disabled={!lookup.trim()} className={secondaryButton}>
+          View
+        </button>
+      </form>
 
       {creating && (
         <div className={cardClass + " space-y-3"}>
@@ -179,12 +207,14 @@ function ListDetail({
   onBack,
   onChanged,
   onUse,
+  onOpenContact,
 }: {
   list: FullList;
   canManage: boolean;
   onBack: () => void;
   onChanged: () => void;
   onUse: (csv: string, notice: string) => void;
+  onOpenContact: (email: string) => void;
 }) {
   const [q, setQ] = useState("");
   const [renaming, setRenaming] = useState(false);
@@ -341,7 +371,11 @@ function ListDetail({
           <tbody>
             {filtered.slice(0, 200).map((c) => (
               <tr key={c.email} className="border-b border-slate-100">
-                <td className="px-3 py-2 font-medium text-slate-800">{c.email}</td>
+                <td className="px-3 py-2 font-medium text-slate-800">
+                  <button onClick={() => onOpenContact(c.email)} className="hover:text-indigo-600 hover:underline">
+                    {c.email}
+                  </button>
+                </td>
                 <td className="px-3 py-2 text-slate-600">{c.name}</td>
                 {extraColumns.map((col) => (
                   <td key={col} className="px-3 py-2 text-slate-600">

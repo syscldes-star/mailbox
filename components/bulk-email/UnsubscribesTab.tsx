@@ -38,7 +38,7 @@ const REASON_BADGE: Record<Reason, string> = {
   manual: "bg-indigo-50 text-indigo-700",
 };
 
-export default function UnsubscribesTab() {
+export default function UnsubscribesTab({ onOpenContact }: { onOpenContact: (email: string) => void }) {
   const [data, setData] = useState<ListResult | null>(null);
   const [q, setQ] = useState("");
   const [reason, setReason] = useState<"" | Reason>("");
@@ -225,7 +225,9 @@ export default function UnsubscribesTab() {
               data.items.map((e) => (
                 <tr key={e.id} className="border-b border-slate-100">
                   <td className="px-3 py-2.5 font-medium text-slate-800">
-                    {e.email}
+                    <button onClick={() => onOpenContact(e.email)} className="hover:text-indigo-600 hover:underline">
+                      {e.email}
+                    </button>
                     {e.note && <span className="ml-2 text-xs font-normal text-slate-400">{e.note}</span>}
                   </td>
                   <td className="px-3 py-2.5">

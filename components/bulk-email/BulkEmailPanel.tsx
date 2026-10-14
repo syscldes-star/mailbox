@@ -46,6 +46,7 @@ import UnsubscribesTab from "@/components/bulk-email/UnsubscribesTab";
 import TemplatesTab, { type SavedTemplate } from "@/components/bulk-email/TemplatesTab";
 import ListsTab from "@/components/bulk-email/ListsTab";
 import DomainHealth from "@/components/bulk-email/DomainHealth";
+import ContactProfile from "@/components/bulk-email/ContactProfile";
 import OverviewTab from "@/components/bulk-email/OverviewTab";
 import ListPicker from "@/components/bulk-email/ListPicker";
 import VisualEditor, { insertTextAtCaret, isVisualSafe } from "@/components/bulk-email/VisualEditor";
@@ -236,6 +237,7 @@ export default function BulkEmailPanel() {
   const [utmSource, setUtmSource] = useState("email");
   const [utmMedium, setUtmMedium] = useState("email");
   const [utmCampaign, setUtmCampaign] = useState("");
+  const [profileEmail, setProfileEmail] = useState<string | null>(null);
   const [linkResults, setLinkResults] = useState<{ url: string; ok: boolean; status?: number; error?: string }[] | null>(null);
   const [checkingLinks, setCheckingLinks] = useState(false);
   // Link results describe a specific body -- clear them when it changes.
@@ -1334,6 +1336,7 @@ export default function BulkEmailPanel() {
                                 actionPending={actionPending}
                                 onAction={(action) => jobAction(job.id, action)}
                                 onSendAgain={(audience) => sendAgain(job.id, audience)}
+                                onOpenContact={setProfileEmail}
                                 onRefresh={() => {
                                   refresh();
                                   refreshDetail(job.id);
@@ -1353,9 +1356,10 @@ export default function BulkEmailPanel() {
       )}
 
       {tab === "overview" && <OverviewTab />}
-      {tab === "lists" && <ListsTab onUse={applyRecipientsCsv} />}
+      {tab === "lists" && <ListsTab onUse={applyRecipientsCsv} onOpenContact={setProfileEmail} />}
       {tab === "templates" && <TemplatesTab onUse={applyTemplate} />}
-      {tab === "unsubscribes" && <UnsubscribesTab />}
+      {tab === "unsubscribes" && <UnsubscribesTab onOpenContact={setProfileEmail} />}
+      {profileEmail && <ContactProfile email={profileEmail} onClose={() => setProfileEmail(null)} />}
       {tab === "settings" && <SettingsTab onSaved={refresh} />}
     </div>
   );
@@ -1371,6 +1375,7 @@ function JobDetailPanel({
   onAction,
   onRefresh,
   onSendAgain,
+  onOpenContact,
 }: {
   job: JobSummary;
   detail: JobDetail | null;
@@ -1381,6 +1386,7 @@ function JobDetailPanel({
   onAction: (action: "cancel" | "resume" | "retry_failed") => void;
   onRefresh: () => void;
   onSendAgain: (audience: SendAgainAudience) => void;
+  onOpenContact: (email: string) => void;
 }) {
   if (!detail) return <p className="text-xs text-slate-400">Loading details…</p>;
 
@@ -1513,7 +1519,9 @@ function JobDetailPanel({
                 {r.status === "failed" && <XCircle size={14} className="shrink-0 text-red-500" />}
                 {r.status === "skipped" && <Ban size={14} className="shrink-0 text-slate-400" />}
                 {r.status === "pending" && <Loader2 size={14} className="shrink-0 text-slate-300" />}
-                <span className="font-medium text-slate-800">{r.email}</span>
+                <button onClick={() => onOpenContact(r.email)} className="font-medium text-slate-800 hover:text-indigo-600 hover:underline">
+                  {r.email}
+                </button>
                 {r.name && <span className="text-slate-400">{r.name}</span>}
                 {r.openedAt && (
                   <span

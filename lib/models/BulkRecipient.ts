@@ -70,7 +70,7 @@ BulkRecipientSchema.index({ jobId: 1, email: 1 }, { unique: true });
 BulkRecipientSchema.index({ jobId: 1, status: 1, index: 1 });
 // Bounce sync and contact profiles look recipients up by address.
 BulkRecipientSchema.index({ email: 1, status: 1 });
-BulkRecipientSchema.index({ workspaceId: 1, email: 1 });
+BulkRecipientSchema.index({ workspaceId: 1, email: 1, _id: -1 });
 
 const db = emailDb();
 export const BulkRecipient: Model<IBulkRecipient> =
