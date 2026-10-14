@@ -25,6 +25,12 @@ export interface IBulkRecipient {
   openedAt?: Date;
   lastOpenedAt?: Date;
   openCount?: number;
+  /** First tracked link click. */
+  clickedAt?: Date;
+  lastClickedAt?: Date;
+  clickCount?: number;
+  /** Distinct destination URLs this recipient clicked. */
+  clickedLinks?: string[];
 }
 
 export interface IBulkEmailJob extends Document {
@@ -38,6 +44,8 @@ export interface IBulkEmailJob extends Document {
   bodyHtml: string;
   /** Whether each email carries an open-tracking pixel. */
   trackOpens?: boolean;
+  /** Whether links are routed through the click-tracking redirect. */
+  trackClicks?: boolean;
   /** Absolute base URL unsubscribe links point at, captured at creation
    * time since the background worker has no request to derive it from. */
   publicBaseUrl: string;
@@ -65,6 +73,10 @@ const RecipientSchema = new Schema<IBulkRecipient>(
     openedAt: Date,
     lastOpenedAt: Date,
     openCount: Number,
+    clickedAt: Date,
+    lastClickedAt: Date,
+    clickCount: Number,
+    clickedLinks: { type: [String], default: undefined },
   },
   { _id: false }
 );
@@ -80,6 +92,7 @@ const BulkEmailJobSchema = new Schema<IBulkEmailJob>(
     subject: { type: String, required: true },
     bodyHtml: { type: String, required: true },
     trackOpens: { type: Boolean, default: false },
+    trackClicks: { type: Boolean, default: false },
     publicBaseUrl: { type: String, required: true },
     recipients: { type: [RecipientSchema], default: [] },
     status: {

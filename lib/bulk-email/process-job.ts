@@ -14,7 +14,7 @@ import { EmailSuppression } from "../models/EmailSuppression";
 import { sendEmail, SendError, type OutgoingEmail } from "./sender";
 import { htmlToText, renderTemplate, withUnsubscribeFooter } from "./template";
 import { unsubscribeUrl } from "./unsubscribe";
-import { openPixelUrl, withOpenPixel } from "./tracking";
+import { clickTrackingUrl, openPixelUrl, rewriteLinks, withOpenPixel } from "./tracking";
 
 const CONCURRENCY = Math.max(1, Number(process.env.BULK_EMAIL_CONCURRENCY) || 5);
 const RATE_PER_SECOND = Math.max(1, Number(process.env.BULK_EMAIL_RATE_PER_SECOND) || 10);
@@ -39,12 +39,17 @@ export interface MessageSource {
 export function buildMessage(
   source: MessageSource,
   recipient: Pick<IBulkRecipient, "email" | "name" | "vars">,
-  openPixel?: string
+  tracking: { openPixel?: string; wrapLink?: (url: string) => string } = {}
 ): OutgoingEmail {
   const unsubscribe = unsubscribeUrl(source.publicBaseUrl, source.workspaceId, recipient.email);
   const vars = { ...(recipient.vars ?? {}), email: recipient.email, name: recipient.name ?? "", unsubscribe_url: unsubscribe };
   const rendered = renderTemplate(withUnsubscribeFooter(source.bodyHtml), vars, { html: true });
-  const html = openPixel ? withOpenPixel(rendered, openPixel) : rendered;
+  // Links are wrapped after rendering so merge tags inside URLs are
+  // already filled in; the unsubscribe link is never wrapped.
+  const linked = tracking.wrapLink
+    ? rewriteLinks(rendered, tracking.wrapLink, (url) => url === unsubscribe)
+    : rendered;
+  const html = tracking.openPixel ? withOpenPixel(linked, tracking.openPixel) : linked;
   return {
     from: { email: `${source.fromLocalPart}@${source.fromDomain}`, name: source.fromName },
     to: { email: recipient.email, name: recipient.name },
@@ -121,8 +126,14 @@ export async function processBulkJob(jobId: string): Promise<void> {
             update = { [`${path}.status`]: "skipped", [`${path}.error`]: "Unsubscribed" };
           } else {
             try {
-              const pixel = job.trackOpens ? openPixelUrl(job.publicBaseUrl, jobId, index) : undefined;
-              const result = await sendWithRetry(buildMessage(job, r, pixel));
+              const result = await sendWithRetry(
+                buildMessage(job, r, {
+                  openPixel: job.trackOpens ? openPixelUrl(job.publicBaseUrl, jobId, index) : undefined,
+                  wrapLink: job.trackClicks
+                    ? (url) => clickTrackingUrl(job.publicBaseUrl, jobId, index, url)
+                    : undefined,
+                })
+              );
               update = result.suppressed
                 ? { [`${path}.status`]: "skipped", [`${path}.error`]: "On Oracle's suppression list (prior bounce or complaint)" }
                 : { [`${path}.status`]: "sent", [`${path}.messageId`]: result.messageId, [`${path}.sentAt`]: new Date() };

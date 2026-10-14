@@ -44,7 +44,13 @@ export async function GET() {
               $filter: { input: "$recipients", cond: { $ne: [{ $ifNull: ["$$this.openedAt", null] }, null] } },
             },
           },
+          clicked: {
+            $size: {
+              $filter: { input: "$recipients", cond: { $ne: [{ $ifNull: ["$$this.clickedAt", null] }, null] } },
+            },
+          },
           trackOpens: 1,
+          trackClicks: 1,
         },
       },
     ]),
@@ -65,6 +71,7 @@ interface CreateBody {
   subject?: string;
   bodyHtml?: string;
   trackOpens?: boolean;
+  trackClicks?: boolean;
   recipients?: { email?: string; name?: string; vars?: Record<string, unknown> }[];
 }
 
@@ -127,6 +134,7 @@ export async function POST(req: NextRequest) {
     subject,
     bodyHtml,
     trackOpens: body.trackOpens !== false,
+    trackClicks: body.trackClicks !== false,
     publicBaseUrl: publicBaseUrl(req),
     recipients,
     status: "sending",

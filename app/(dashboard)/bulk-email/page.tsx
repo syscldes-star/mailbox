@@ -18,6 +18,7 @@ import {
   ChevronDown,
   ChevronRight,
   MailOpen,
+  MousePointerClick,
   RefreshCw,
 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, ApiError } from "@/lib/api/client";
@@ -44,7 +45,9 @@ interface JobSummary {
   failed: number;
   skipped: number;
   opened: number;
+  clicked: number;
   trackOpens?: boolean;
+  trackClicks?: boolean;
 }
 
 interface JobRecipient {
@@ -56,9 +59,13 @@ interface JobRecipient {
   openedAt?: string;
   lastOpenedAt?: string;
   openCount?: number;
+  clickedAt?: string;
+  lastClickedAt?: string;
+  clickCount?: number;
+  clickedLinks?: string[];
 }
 
-interface JobDetail extends Omit<JobSummary, "total" | "sent" | "failed" | "skipped" | "opened"> {
+interface JobDetail extends Omit<JobSummary, "total" | "sent" | "failed" | "skipped" | "opened" | "clicked"> {
   recipients: JobRecipient[];
 }
 
@@ -68,12 +75,13 @@ interface ListResponse {
   jobs: JobSummary[];
 }
 
-type RecipientFilter = "all" | JobRecipient["status"] | "opened" | "not_opened";
+type RecipientFilter = "all" | JobRecipient["status"] | "opened" | "not_opened" | "clicked";
 
 function matchesFilter(r: JobRecipient, filter: RecipientFilter) {
   if (filter === "all") return true;
   if (filter === "opened") return !!r.openedAt;
   if (filter === "not_opened") return r.status === "sent" && !r.openedAt;
+  if (filter === "clicked") return !!r.clickedAt;
   return r.status === filter;
 }
 
@@ -99,9 +107,20 @@ function formatDate(iso?: string) {
 function downloadCsv(job: JobDetail) {
   const escape = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
   const lines = [
-    "email,name,status,error,sent_at,opened_at,open_count",
+    "email,name,status,error,sent_at,opened_at,open_count,clicked_at,click_count,clicked_links",
     ...job.recipients.map((r) =>
-      [r.email, r.name ?? "", r.status, r.error ?? "", r.sentAt ?? "", r.openedAt ?? "", String(r.openCount ?? 0)]
+      [
+        r.email,
+        r.name ?? "",
+        r.status,
+        r.error ?? "",
+        r.sentAt ?? "",
+        r.openedAt ?? "",
+        String(r.openCount ?? 0),
+        r.clickedAt ?? "",
+        String(r.clickCount ?? 0),
+        (r.clickedLinks ?? []).join(" "),
+      ]
         .map(escape)
         .join(",")
     ),
@@ -128,6 +147,7 @@ export default function BulkEmailPage() {
   const [bodyHtml, setBodyHtml] = useState(DEFAULT_BODY);
   const [recipientsText, setRecipientsText] = useState("");
   const [trackOpens, setTrackOpens] = useState(true);
+  const [trackClicks, setTrackClicks] = useState(true);
   const [bodyView, setBodyView] = useState<"edit" | "preview">("edit");
   const [testEmail, setTestEmail] = useState("");
   const [testing, setTesting] = useState(false);
@@ -258,6 +278,7 @@ export default function BulkEmailPage() {
       const result = await apiPost<{ id: string; total: number }>("/api/email/bulk", {
         ...draftPayload(),
         trackOpens,
+        trackClicks,
         recipients: parsed.recipients,
       });
       setConfirming(false);
@@ -540,6 +561,16 @@ export default function BulkEmailPage() {
                 Track opens
                 <span className="text-xs text-slate-400">(adds an invisible 1×1 image to each email)</span>
               </label>
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={trackClicks}
+                  onChange={(e) => setTrackClicks(e.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 accent-indigo-600"
+                />
+                Track clicks
+                <span className="text-xs text-slate-400">(links go through your domain first, then on to the real page)</span>
+              </label>
               <p className="text-xs text-slate-400">
                 An unsubscribe link is added automatically unless you place {"{{unsubscribe_url}}"} yourself.
                 Unsubscribed addresses are skipped on future sends.
@@ -618,6 +649,7 @@ export default function BulkEmailPage() {
                   <th className="px-3 py-3">From</th>
                   <th className="px-3 py-3">Progress</th>
                   <th className="px-3 py-3">Opened</th>
+                  <th className="px-3 py-3">Clicked</th>
                   <th className="px-3 py-3">Status</th>
                   <th className="px-3 py-3">Created</th>
                 </tr>
@@ -625,13 +657,13 @@ export default function BulkEmailPage() {
               <tbody>
                 {data === null ? (
                   <tr>
-                    <td colSpan={7} className="px-3 py-6 text-center text-slate-400">
+                    <td colSpan={8} className="px-3 py-6 text-center text-slate-400">
                       Loading…
                     </td>
                   </tr>
                 ) : data.jobs.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-3 py-6 text-center text-slate-400">
+                    <td colSpan={8} className="px-3 py-6 text-center text-slate-400">
                       No bulk sends yet.
                     </td>
                   </tr>
@@ -675,6 +707,18 @@ export default function BulkEmailPage() {
                               <span className="text-slate-400">Not tracked</span>
                             )}
                           </td>
+                          <td className="whitespace-nowrap px-3 py-3 text-xs">
+                            {job.trackClicks ? (
+                              <>
+                                <span className="font-medium text-slate-900">
+                                  {job.sent ? Math.round((job.clicked / job.sent) * 100) : 0}%
+                                </span>
+                                <span className="text-slate-500"> · {job.clicked.toLocaleString()}</span>
+                              </>
+                            ) : (
+                              <span className="text-slate-400">Not tracked</span>
+                            )}
+                          </td>
                           <td className="px-3 py-3">
                             <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_BADGE[job.status]}`}>
                               {job.status === "sending" && <Loader2 size={11} className="mr-1 inline animate-spin" />}
@@ -685,7 +729,7 @@ export default function BulkEmailPage() {
                         </tr>
                         {expanded && (
                           <tr className="border-b border-slate-100 bg-slate-50/50">
-                            <td colSpan={7} className="px-5 py-4">
+                            <td colSpan={8} className="px-5 py-4">
                               <JobDetailPanel
                                 job={job}
                                 detail={detail?.id === job.id ? detail : null}
@@ -739,9 +783,22 @@ function JobDetailPanel({
   const pending = detail.recipients.filter((r) => r.status === "pending").length;
   const matching = detail.recipients.filter((r) => matchesFilter(r, filter));
   const shown = matching.slice(0, 200);
-  const filters: RecipientFilter[] = job.trackOpens
-    ? ["all", "sent", "opened", "not_opened", "failed", "skipped", "pending"]
-    : ["all", "sent", "failed", "skipped", "pending"];
+  const filters: RecipientFilter[] = [
+    "all",
+    "sent",
+    ...(job.trackOpens ? (["opened", "not_opened"] as const) : []),
+    ...(job.trackClicks ? (["clicked"] as const) : []),
+    "failed",
+    "skipped",
+    "pending",
+  ];
+
+  // Unique recipients per clicked link, most-clicked first.
+  const linkCounts = new Map<string, number>();
+  for (const r of detail.recipients) {
+    for (const url of r.clickedLinks ?? []) linkCounts.set(url, (linkCounts.get(url) ?? 0) + 1);
+  }
+  const topLinks = [...linkCounts.entries()].sort((a, b) => b[1] - a[1]);
   const busy = (action: string) => actionPending === job.id + action;
 
   return (
@@ -805,6 +862,24 @@ function JobDetailPanel({
         ))}
       </div>
 
+      {topLinks.length > 0 && (
+        <div className="rounded-lg border border-slate-200 bg-white">
+          <p className="border-b border-slate-100 px-3 py-2 text-xs font-medium text-slate-700">Clicked links</p>
+          <ul className="max-h-40 divide-y divide-slate-100 overflow-y-auto">
+            {topLinks.map(([url, count]) => (
+              <li key={url} className="flex items-center gap-3 px-3 py-1.5 text-xs">
+                <a href={url} target="_blank" rel="noreferrer" className="truncate text-indigo-600 hover:underline" title={url}>
+                  {url}
+                </a>
+                <span className="ml-auto shrink-0 text-slate-500">
+                  {count} {count === 1 ? "person" : "people"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="max-h-80 overflow-y-auto rounded-lg border border-slate-200 bg-white">
         {shown.length === 0 ? (
           <p className="p-4 text-center text-xs text-slate-400">No recipients in this view.</p>
@@ -824,6 +899,14 @@ function JobDetailPanel({
                     title={`First opened ${formatDate(r.openedAt)}${r.lastOpenedAt ? ` · last ${formatDate(r.lastOpenedAt)}` : ""}`}
                   >
                     <MailOpen size={12} /> Opened{(r.openCount ?? 0) > 1 ? ` ×${r.openCount}` : ""}
+                  </span>
+                )}
+                {r.clickedAt && (
+                  <span
+                    className="flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-indigo-700"
+                    title={(r.clickedLinks ?? []).join("\n")}
+                  >
+                    <MousePointerClick size={12} /> Clicked{(r.clickCount ?? 0) > 1 ? ` ×${r.clickCount}` : ""}
                   </span>
                 )}
                 {r.error && <span className="ml-auto truncate text-red-600" title={r.error}>{r.error}</span>}
