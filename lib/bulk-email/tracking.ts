@@ -88,3 +88,42 @@ export function rewriteLinks(html: string, wrap: (url: string) => string, skip: 
     return `${prefix}"${encodeHtmlAttr(wrap(url))}"`;
   });
 }
+
+// ---- Campaign (UTM) tags ----
+
+export interface UtmTags {
+  source: string;
+  medium: string;
+  campaign: string;
+}
+
+/** Adds utm_source/medium/campaign to a link, keeping any utm_* the
+ * link already sets (a hand-tagged link wins). Non-http links and URLs
+ * that don't parse are returned unchanged. */
+export function addUtmTags(url: string, utm: UtmTags): string {
+  if (!/^https?:\/\//i.test(url) || /\{\{/.test(url)) return url;
+  try {
+    const u = new URL(url);
+    const pairs: [string, string][] = [
+      ["utm_source", utm.source],
+      ["utm_medium", utm.medium],
+      ["utm_campaign", utm.campaign],
+    ];
+    for (const [key, value] of pairs) {
+      if (value && !u.searchParams.has(key)) u.searchParams.set(key, value);
+    }
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+/** Lower-case, dash-separated version of a subject, for utm_campaign. */
+export function campaignSlug(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\{\{[^}]*\}\}/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60);
+}

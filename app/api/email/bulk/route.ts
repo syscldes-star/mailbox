@@ -8,9 +8,11 @@
 // any reverse proxy's body-size limit, even for very large lists.
 
 import { NextRequest } from "next/server";
+import mongoose from "mongoose";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { BulkEmailJob } from "@/lib/models/BulkEmailJob";
+import { User } from "@/lib/models/User";
 import { isValidEmail } from "@/lib/bulk-email/recipients";
 import { resumeStaleJobs } from "@/lib/bulk-email/process-job";
 import { getEmailSettings } from "@/lib/bulk-email/settings";
@@ -32,12 +34,34 @@ export async function GET() {
       .lean(),
   ]);
 
+  // Names of the people who created each send (users live in the main database).
+  const creatorIds = [...new Set(jobs.map((j) => j.createdBy).filter((id) => mongoose.isValidObjectId(id)))];
+  const creators = new Map(
+    (await User.find({ _id: { $in: creatorIds } }).select("firstName lastName email").lean()).map((u) => [
+      String(u._id),
+      `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() || u.email,
+    ])
+  );
+
   return apiSuccess({
     senders,
     canSend: hasMinimumRole(auth.membership.role, MIN_SEND_ROLE),
     settings,
-    jobs: jobs.map(({ _id, counts, ...rest }) => ({ id: String(_id), ...rest, ...counts })),
+    jobs: jobs.map(({ _id, counts, ...rest }) => ({
+      id: String(_id),
+      ...rest,
+      ...counts,
+      createdByName: creators.get(rest.createdBy) ?? "Unknown",
+    })),
   });
+}
+
+/** Trims UTM values to safe, short strings; no tags if all are empty. */
+function cleanUtm(utm?: { source?: string; medium?: string; campaign?: string }) {
+  if (!utm) return undefined;
+  const clean = (v?: string) => String(v ?? "").trim().slice(0, 100);
+  const out = { source: clean(utm.source), medium: clean(utm.medium), campaign: clean(utm.campaign) };
+  return out.source || out.medium || out.campaign ? out : undefined;
 }
 
 interface CreateBody {
@@ -51,6 +75,7 @@ interface CreateBody {
   trackClicks?: boolean;
   preheader?: string;
   scheduledAt?: string;
+  utm?: { source?: string; medium?: string; campaign?: string };
 }
 
 export async function POST(req: NextRequest) {
@@ -113,6 +138,7 @@ export async function POST(req: NextRequest) {
     bodyHtml,
     trackOpens: body.trackOpens !== false,
     trackClicks: body.trackClicks !== false,
+    utm: cleanUtm(body.utm),
     publicBaseUrl: publicBaseUrl(req),
     postalAddress: settings.postalAddress,
     status: "preparing",

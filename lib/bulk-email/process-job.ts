@@ -15,7 +15,7 @@ import { EmailSuppression } from "../models/EmailSuppression";
 import { sendEmail, SendError, type OutgoingEmail } from "./sender";
 import { htmlToText, renderTemplate, withFooter, withPreheader } from "./template";
 import { unsubscribeUrl } from "./unsubscribe";
-import { clickTrackingUrl, openPixelUrl, rewriteLinks, withOpenPixel } from "./tracking";
+import { addUtmTags, clickTrackingUrl, openPixelUrl, rewriteLinks, withOpenPixel, type UtmTags } from "./tracking";
 
 const CONCURRENCY = Math.max(1, Number(process.env.BULK_EMAIL_CONCURRENCY) || 5);
 const RATE_PER_SECOND = Math.max(1, Number(process.env.BULK_EMAIL_RATE_PER_SECOND) || 10);
@@ -44,6 +44,7 @@ export interface MessageSource {
   bodyHtml: string;
   publicBaseUrl: string;
   postalAddress?: string;
+  utm?: UtmTags;
 }
 
 /** Renders the job's template for one recipient. Shared with the
@@ -56,11 +57,12 @@ export function buildMessage(
   const unsubscribe = unsubscribeUrl(source.publicBaseUrl, source.workspaceId, recipient.email);
   const vars = { ...(recipient.vars ?? {}), email: recipient.email, name: recipient.name ?? "", unsubscribe_url: unsubscribe };
   const rendered = renderTemplate(withPreheader(withFooter(source.bodyHtml, source.postalAddress), source.preheader), vars, { html: true });
-  // Links are wrapped after rendering so merge tags inside URLs are
-  // already filled in; the unsubscribe link is never wrapped.
-  const linked = tracking.wrapLink
-    ? rewriteLinks(rendered, tracking.wrapLink, (url) => url === unsubscribe)
-    : rendered;
+  // Links are tagged and wrapped after rendering so merge tags inside
+  // URLs are already filled in; the unsubscribe link is never touched.
+  // UTM tags go on first, so the click redirect lands on the tagged URL.
+  const isUnsubscribe = (url: string) => url === unsubscribe;
+  const tagged = source.utm ? rewriteLinks(rendered, (url) => addUtmTags(url, source.utm!), isUnsubscribe) : rendered;
+  const linked = tracking.wrapLink ? rewriteLinks(tagged, tracking.wrapLink, isUnsubscribe) : tagged;
   const html = tracking.openPixel ? withOpenPixel(linked, tracking.openPixel) : linked;
   return {
     from: { email: `${source.fromLocalPart}@${source.fromDomain}`, name: source.fromName },

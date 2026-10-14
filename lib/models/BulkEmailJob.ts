@@ -41,6 +41,8 @@ export interface IBulkEmailJob extends Document {
   trackOpens?: boolean;
   /** Whether links are routed through the click-tracking redirect. */
   trackClicks?: boolean;
+  /** Campaign tags added to every link, for web analytics. */
+  utm?: { source: string; medium: string; campaign: string };
   /** Absolute base URL unsubscribe links point at, captured at creation
    * time since the background worker has no request to derive it from. */
   publicBaseUrl: string;
@@ -87,6 +89,10 @@ const BulkEmailJobSchema = new Schema<IBulkEmailJob>(
     bodyHtml: { type: String, required: true },
     trackOpens: { type: Boolean, default: false },
     trackClicks: { type: Boolean, default: false },
+    utm: {
+      type: new Schema({ source: String, medium: String, campaign: String }, { _id: false }),
+      default: undefined,
+    },
     publicBaseUrl: { type: String, required: true },
     postalAddress: String,
     counts: { type: CountsSchema, default: () => ({ ...EMPTY_COUNTS }) },

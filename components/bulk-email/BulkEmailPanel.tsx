@@ -31,10 +31,13 @@ import {
   CalendarClock,
   FileText,
   Pencil,
+  Monitor,
+  Smartphone,
 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, ApiError } from "@/lib/api/client";
 import { parseRecipients, recipientsToCsv, MAX_RECIPIENTS_PER_JOB, type ParseResult } from "@/lib/bulk-email/recipients";
 import { extractTags, renderTemplate, withFooter } from "@/lib/bulk-email/template";
+import { campaignSlug } from "@/lib/bulk-email/tracking";
 import SettingsTab from "@/components/bulk-email/SettingsTab";
 import UnsubscribesTab from "@/components/bulk-email/UnsubscribesTab";
 import TemplatesTab, { type SavedTemplate } from "@/components/bulk-email/TemplatesTab";
@@ -69,6 +72,7 @@ interface JobSummary {
   complained: number;
   trackOpens?: boolean;
   trackClicks?: boolean;
+  createdByName?: string;
 }
 
 interface JobRecipient {
@@ -123,6 +127,7 @@ interface ComposeDraft {
   recipientsText?: string;
   trackOpens?: boolean;
   trackClicks?: boolean;
+  utm?: { source: string; medium: string; campaign: string };
 }
 
 const DRAFT_STORAGE_KEY = "bulk-email-draft-v1";
@@ -223,6 +228,11 @@ export default function BulkEmailPanel() {
   const [recipientsText, setRecipientsText] = useState("");
   const [trackOpens, setTrackOpens] = useState(true);
   const [trackClicks, setTrackClicks] = useState(true);
+  const [utmEnabled, setUtmEnabled] = useState(false);
+  const [utmSource, setUtmSource] = useState("email");
+  const [utmMedium, setUtmMedium] = useState("email");
+  const [utmCampaign, setUtmCampaign] = useState("");
+  const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
   const [bodyView, setBodyView] = useState<"visual" | "html" | "preview">("visual");
   const visualEditorEl = useRef<HTMLDivElement | null>(null);
   const [testEmail, setTestEmail] = useState("");
@@ -326,6 +336,14 @@ export default function BulkEmailPanel() {
     if (d.recipientsText !== undefined) setRecipientsText(d.recipientsText);
     if (d.trackOpens !== undefined) setTrackOpens(d.trackOpens);
     if (d.trackClicks !== undefined) setTrackClicks(d.trackClicks);
+    if (d.utm !== undefined) {
+      setUtmEnabled(!!d.utm);
+      if (d.utm) {
+        setUtmSource(d.utm.source);
+        setUtmMedium(d.utm.medium);
+        setUtmCampaign(d.utm.campaign);
+      }
+    }
   }
 
   function clearCompose() {
@@ -476,7 +494,16 @@ export default function BulkEmailPanel() {
   }
 
   function draftPayload() {
-    return { fromDomain, fromLocalPart, fromName, replyTo, subject, preheader, bodyHtml };
+    return {
+      fromDomain,
+      fromLocalPart,
+      fromName,
+      replyTo,
+      subject,
+      preheader,
+      bodyHtml,
+      utm: utmEnabled ? { source: utmSource, medium: utmMedium, campaign: utmCampaign || campaignSlug(subject) } : undefined,
+    };
   }
 
   async function handleTest() {
@@ -858,12 +885,31 @@ export default function BulkEmailPanel() {
                         </p>
                       )}
                     </div>
-                    <iframe
-                      title="Email preview"
-                      sandbox=""
-                      srcDoc={previewHtml}
-                      className="h-80 w-full bg-white"
-                    />
+                    <div className="flex justify-end gap-1 border-b border-slate-200 bg-slate-50 px-3 py-1.5">
+                      {(["desktop", "mobile"] as const).map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setPreviewDevice(d)}
+                          className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs ${previewDevice === d ? "bg-white font-medium text-slate-900 shadow-sm" : "text-slate-500"}`}
+                        >
+                          {d === "desktop" ? <Monitor size={13} /> : <Smartphone size={13} />}
+                          {d === "desktop" ? "Desktop" : "Mobile"}
+                        </button>
+                      ))}
+                    </div>
+                    <div className={previewDevice === "mobile" ? "flex justify-center bg-slate-100 py-4" : ""}>
+                      <iframe
+                        title="Email preview"
+                        sandbox=""
+                        srcDoc={previewHtml}
+                        className={
+                          previewDevice === "mobile"
+                            ? "h-[560px] w-[375px] rounded-2xl border-4 border-slate-800 bg-white shadow-lg"
+                            : "h-80 w-full bg-white"
+                        }
+                      />
+                    </div>
                   </div>
                 )}
               </div>
@@ -908,6 +954,39 @@ export default function BulkEmailPanel() {
                 Track clicks
                 <span className="text-xs text-slate-400">(links go through your domain first, then on to the real page)</span>
               </label>
+              <div>
+                <label className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={utmEnabled}
+                    onChange={(e) => setUtmEnabled(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 accent-indigo-600"
+                  />
+                  Add campaign tags to links
+                  <span className="text-xs text-slate-400">(UTM tags, so Google Analytics shows which email brought each visitor)</span>
+                </label>
+                {utmEnabled && (
+                  <div className="mt-2 grid grid-cols-1 gap-2 pl-6 sm:grid-cols-3">
+                    <div>
+                      <label className={labelClass}>utm_source</label>
+                      <input value={utmSource} onChange={(e) => setUtmSource(e.target.value)} className={inputClass} />
+                    </div>
+                    <div>
+                      <label className={labelClass}>utm_medium</label>
+                      <input value={utmMedium} onChange={(e) => setUtmMedium(e.target.value)} className={inputClass} />
+                    </div>
+                    <div>
+                      <label className={labelClass}>utm_campaign</label>
+                      <input
+                        value={utmCampaign}
+                        onChange={(e) => setUtmCampaign(e.target.value)}
+                        placeholder={campaignSlug(subject) || "spring-sale"}
+                        className={inputClass}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
               <p className="text-xs text-slate-400">
                 An unsubscribe link is added automatically unless you place {"{{unsubscribe_url}}"} yourself.
                 Unsubscribed addresses are skipped on future sends.
@@ -1054,7 +1133,7 @@ export default function BulkEmailPanel() {
                 <tr>
                   <th className="w-8 px-3 py-3" />
                   <th className="px-3 py-3">Subject</th>
-                  <th className="px-3 py-3">From</th>
+                  <th className="px-3 py-3">From / by</th>
                   <th className="px-3 py-3">Progress</th>
                   <th className="px-3 py-3">Opened</th>
                   <th className="px-3 py-3">Clicked</th>
@@ -1092,6 +1171,7 @@ export default function BulkEmailPanel() {
                           <td className="max-w-[240px] truncate px-3 py-3 font-medium text-slate-900">{job.subject}</td>
                           <td className="px-3 py-3 text-slate-600">
                             {job.fromLocalPart}@{job.fromDomain}
+                            {job.createdByName && <p className="text-xs text-slate-400">by {job.createdByName}</p>}
                           </td>
                           <td className="min-w-[180px] px-3 py-3">
                             <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">

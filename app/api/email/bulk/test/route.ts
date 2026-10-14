@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     return apiError("Only managers, admins, and owners can send bulk email.", 403);
   }
 
-  const { testEmail, fromDomain, fromLocalPart, fromName, replyTo, subject, preheader, bodyHtml, sample } = await req.json();
+  const { testEmail, fromDomain, fromLocalPart, fromName, replyTo, subject, preheader, bodyHtml, sample, utm } = await req.json();
   const to = String(testEmail ?? "").trim().toLowerCase();
   const domain = String(fromDomain ?? "").trim().toLowerCase();
   const localPart = String(fromLocalPart ?? "").trim().toLowerCase();
@@ -52,6 +52,10 @@ export async function POST(req: NextRequest) {
       bodyHtml,
       publicBaseUrl: publicBaseUrl(req),
       postalAddress: (await getEmailSettings(auth.workspaceId)).postalAddress,
+      utm:
+        utm && (utm.source || utm.medium || utm.campaign)
+          ? { source: String(utm.source ?? "").slice(0, 100), medium: String(utm.medium ?? "").slice(0, 100), campaign: String(utm.campaign ?? "").slice(0, 100) }
+          : undefined,
     },
     // Rendered with the sample recipient's data, but delivered to the
     // test address -- and the unsubscribe link targets the test address

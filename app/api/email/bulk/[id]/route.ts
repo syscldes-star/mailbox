@@ -53,6 +53,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       bodyHtml: job.bodyHtml,
       trackOpens: job.trackOpens ?? true,
       trackClicks: job.trackClicks ?? true,
+      utm: job.utm,
       recipients: recipients.map((r) => ({ email: r.email, name: r.name ?? "", vars: r.vars ?? {} })),
     });
   }
