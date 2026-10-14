@@ -23,6 +23,7 @@ import {
   Save,
   CalendarClock,
   FileText,
+  Pencil,
 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, ApiError } from "@/lib/api/client";
 import { parseRecipients, recipientsToCsv, MAX_RECIPIENTS_PER_JOB, type ParseResult } from "@/lib/bulk-email/recipients";
@@ -30,6 +31,10 @@ import { extractTags, renderTemplate, withFooter } from "@/lib/bulk-email/templa
 import SettingsTab from "@/components/bulk-email/SettingsTab";
 import UnsubscribesTab from "@/components/bulk-email/UnsubscribesTab";
 import TemplatesTab, { type SavedTemplate } from "@/components/bulk-email/TemplatesTab";
+import ListsTab from "@/components/bulk-email/ListsTab";
+import OverviewTab from "@/components/bulk-email/OverviewTab";
+import ListPicker from "@/components/bulk-email/ListPicker";
+import VisualEditor, { insertTextAtCaret, isVisualSafe } from "@/components/bulk-email/VisualEditor";
 
 interface SenderDomain {
   domain: string;
@@ -88,11 +93,13 @@ interface ListResponse {
   usage: { usedLast24h: number; dailyLimit: number };
 }
 
-type Tab = "compose" | "history" | "templates" | "unsubscribes" | "settings";
+type Tab = "overview" | "compose" | "history" | "lists" | "templates" | "unsubscribes" | "settings";
 
 const TAB_LABEL: Record<Tab, string> = {
+  overview: "Overview",
   compose: "Compose",
   history: "History",
+  lists: "Lists",
   templates: "Templates",
   unsubscribes: "Unsubscribes",
   settings: "Settings",
@@ -199,11 +206,14 @@ export default function BulkEmailPage() {
   const [savingTemplateName, setSavingTemplateName] = useState<string | null>(null);
   const [templates, setTemplates] = useState<SavedTemplate[]>([]);
   const [draftRestored, setDraftRestored] = useState(false);
+  const [showListPicker, setShowListPicker] = useState(false);
+  const [savingListName, setSavingListName] = useState<string | null>(null);
   const [bodyHtml, setBodyHtml] = useState(DEFAULT_BODY);
   const [recipientsText, setRecipientsText] = useState("");
   const [trackOpens, setTrackOpens] = useState(true);
   const [trackClicks, setTrackClicks] = useState(true);
-  const [bodyView, setBodyView] = useState<"edit" | "preview">("edit");
+  const [bodyView, setBodyView] = useState<"visual" | "html" | "preview">("visual");
+  const visualEditorEl = useRef<HTMLDivElement | null>(null);
   const [testEmail, setTestEmail] = useState("");
   const [testing, setTesting] = useState(false);
   const [sending, setSending] = useState(false);
@@ -323,7 +333,7 @@ export default function BulkEmailPage() {
 
   function loadIntoCompose(d: ComposeDraft, notice: string) {
     applyDraft(d);
-    setBodyView("edit");
+    setBodyView(d.bodyHtml === undefined || isVisualSafe(d.bodyHtml) ? "visual" : "html");
     setConfirming(false);
     setComposeError(null);
     setComposeNotice(notice);
@@ -356,6 +366,25 @@ export default function BulkEmailPage() {
       { subject: t.subject, preheader: t.preheader ?? "", bodyHtml: t.bodyHtml },
       `Template "${t.name}" loaded. Add recipients, then send.`
     );
+  }
+
+  function applyRecipientsCsv(csv: string, notice: string) {
+    setRecipientsText(csv);
+    setShowListPicker(false);
+    setComposeError(null);
+    setComposeNotice(notice);
+    setTab("compose");
+  }
+
+  async function saveRecipientsAsList() {
+    if (!savingListName?.trim()) return;
+    try {
+      const r = await apiPost<{ count: number }>("/api/email/lists", { name: savingListName, text: recipientsText });
+      setComposeNotice(`Saved ${r.count.toLocaleString()} contacts as list "${savingListName.trim()}".`);
+      setSavingListName(null);
+    } catch (err) {
+      setComposeError(err instanceof ApiError ? err.message : "Couldn't save the list.");
+    }
   }
 
   async function saveTemplate() {
@@ -418,6 +447,7 @@ export default function BulkEmailPage() {
   const tooMany = parsed.recipients.length > MAX_RECIPIENTS_PER_JOB;
   const canSend = data?.canSend ?? false;
   const noSenders = data !== null && data.senders.length === 0;
+  const visualSafe = isVisualSafe(bodyHtml);
   const missingAddress = data !== null && !data.settings.postalAddress;
   const remainingToday = data ? Math.max(0, data.usage.dailyLimit - data.usage.usedLast24h) : Infinity;
   const overLimit = parsed.recipients.length > remainingToday;
@@ -430,8 +460,9 @@ export default function BulkEmailPage() {
   }
 
   function insertTag(tag: string) {
+    if (bodyView === "visual" && insertTextAtCaret(visualEditorEl.current, `{{${tag}}}`)) return;
     setBodyHtml((b) => b + `{{${tag}}}`);
-    setBodyView("edit");
+    if (bodyView === "preview") setBodyView(visualSafe ? "visual" : "html");
   }
 
   function draftPayload() {
@@ -657,6 +688,26 @@ export default function BulkEmailPage() {
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-900">Recipients</h2>
+              <div className="ml-auto mr-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowListPicker((v) => !v)}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  <Users size={14} />
+                  Use a saved list
+                </button>
+                {canSend && parsed.recipients.length > 0 && savingListName === null && (
+                  <button
+                    type="button"
+                    onClick={() => setSavingListName("")}
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                  >
+                    <Save size={14} />
+                    Save as list
+                  </button>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => fileInput.current?.click()}
@@ -667,6 +718,29 @@ export default function BulkEmailPage() {
               </button>
               <input ref={fileInput} type="file" accept=".csv,text/csv,text/plain" onChange={handleFile} hidden />
             </div>
+            {showListPicker && <ListPicker onLoad={applyRecipientsCsv} onClose={() => setShowListPicker(false)} />}
+            {savingListName !== null && (
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <input
+                  value={savingListName}
+                  onChange={(e) => setSavingListName(e.target.value)}
+                  placeholder="List name"
+                  autoFocus
+                  className={inputClass + " w-56"}
+                />
+                <button
+                  type="button"
+                  onClick={saveRecipientsAsList}
+                  disabled={!savingListName.trim()}
+                  className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  Save list
+                </button>
+                <button type="button" onClick={() => setSavingListName(null)} className="text-sm text-slate-500 hover:text-slate-900">
+                  Cancel
+                </button>
+              </div>
+            )}
             <textarea
               value={recipientsText}
               onChange={(e) => setRecipientsText(e.target.value)}
@@ -731,25 +805,35 @@ export default function BulkEmailPage() {
 
               <div>
                 <div className="mb-1 flex items-center justify-between">
-                  <label className={labelClass + " mb-0"}>Body (HTML)</label>
+                  <label className={labelClass + " mb-0"}>Body</label>
                   <div className="flex gap-1">
-                    <button
-                      type="button"
-                      onClick={() => setBodyView("edit")}
-                      className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs ${bodyView === "edit" ? "bg-slate-100 font-medium text-slate-900" : "text-slate-500"}`}
-                    >
-                      <Code2 size={13} /> Edit
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setBodyView("preview")}
-                      className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs ${bodyView === "preview" ? "bg-slate-100 font-medium text-slate-900" : "text-slate-500"}`}
-                    >
-                      <Eye size={13} /> Preview
-                    </button>
+                    {(
+                      [
+                        ["visual", "Visual", Pencil],
+                        ["html", "HTML", Code2],
+                        ["preview", "Preview", Eye],
+                      ] as const
+                    ).map(([mode, label, Icon]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        disabled={mode === "visual" && !visualSafe}
+                        title={
+                          mode === "visual" && !visualSafe
+                            ? "This HTML uses styles or code the visual editor can't safely show -- edit it in HTML mode."
+                            : undefined
+                        }
+                        onClick={() => setBodyView(mode)}
+                        className={`flex items-center gap-1 rounded-md px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${bodyView === mode ? "bg-slate-100 font-medium text-slate-900" : "text-slate-500"}`}
+                      >
+                        <Icon size={13} /> {label}
+                      </button>
+                    ))}
                   </div>
                 </div>
-                {bodyView === "edit" ? (
+                {bodyView === "visual" && visualSafe ? (
+                  <VisualEditor value={bodyHtml} onChange={setBodyHtml} editorRef={visualEditorEl} />
+                ) : bodyView !== "preview" ? (
                   <textarea
                     value={bodyHtml}
                     onChange={(e) => setBodyHtml(e.target.value)}
@@ -1080,6 +1164,8 @@ export default function BulkEmailPage() {
         </div>
       )}
 
+      {tab === "overview" && <OverviewTab />}
+      {tab === "lists" && <ListsTab onUse={applyRecipientsCsv} />}
       {tab === "templates" && <TemplatesTab onUse={applyTemplate} />}
       {tab === "unsubscribes" && <UnsubscribesTab />}
       {tab === "settings" && <SettingsTab onSaved={refresh} />}
