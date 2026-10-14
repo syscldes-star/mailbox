@@ -216,10 +216,29 @@ export default function VisualEditor({
 
 /** Inserts text at the caret inside the given editable element (used for merge tags). */
 export function insertTextAtCaret(el: HTMLElement | null, text: string) {
+  return insertAtCaret(el, "insertText", text);
+}
+
+/** Inserts an HTML snippet at the caret (used for signup-form buttons). */
+export function insertHtmlAtCaret(el: HTMLElement | null, html: string) {
+  return insertAtCaret(el, "insertHTML", html);
+}
+
+function insertAtCaret(el: HTMLElement | null, command: "insertText" | "insertHTML", value: string) {
   if (!el) return false;
-  el.focus();
+  // Checked before focus(), which would otherwise put the caret at the
+  // very start when the editor hasn't been clicked into yet.
   const selection = window.getSelection();
-  if (!selection || selection.rangeCount === 0 || !el.contains(selection.anchorNode)) {
+  const hadCaret = !!selection && selection.rangeCount > 0 && el.contains(selection.anchorNode);
+  el.focus();
+  if (!hadCaret && command === "insertHTML") {
+    // A block (e.g. a button paragraph) goes on its own line at the end
+    // rather than being merged into the last paragraph.
+    el.insertAdjacentHTML("beforeend", value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  }
+  if (!hadCaret) {
     // No caret inside the editor -- put it at the end.
     const range = document.createRange();
     range.selectNodeContents(el);
@@ -227,7 +246,10 @@ export function insertTextAtCaret(el: HTMLElement | null, text: string) {
     selection?.removeAllRanges();
     selection?.addRange(range);
   }
-  document.execCommand("insertText", false, text);
+  // Start a new line first so an inserted block isn't merged into the
+  // paragraph the caret is in.
+  if (command === "insertHTML") document.execCommand("insertParagraph");
+  document.execCommand(command, false, value);
   el.dispatchEvent(new Event("input", { bubbles: true }));
   return true;
 }

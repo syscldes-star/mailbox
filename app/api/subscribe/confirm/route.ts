@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
   }
 
   const now = new Date().toISOString();
-  const vars = { signup_form: form.name, subscribed_at: now };
+  const vars = { signup_form: form.name, subscribed_at: now, signup_form_id: String(form._id) };
   // Update the contact if they're already on the list, otherwise add them.
   const updated = await ContactList.updateOne(
     { _id: form.listId, workspaceId: form.workspaceId, "contacts.email": payload.email },
@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
         ...(payload.name ? { "contacts.$.name": payload.name } : {}),
         "contacts.$.vars.signup_form": vars.signup_form,
         "contacts.$.vars.subscribed_at": vars.subscribed_at,
+        "contacts.$.vars.signup_form_id": vars.signup_form_id,
       },
     }
   );

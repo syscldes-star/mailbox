@@ -4,7 +4,7 @@
 // (double opt-in) subscribers to a saved list.
 
 import { useEffect, useState } from "react";
-import { Plus, Copy, Check, ExternalLink, Pencil, Trash2, FormInput, Loader2 } from "lucide-react";
+import { Plus, Copy, Check, ExternalLink, Pencil, Trash2, FormInput, Loader2, Users, RefreshCw } from "lucide-react";
 import { apiDelete, apiGet, apiPost, apiPut, ApiError } from "@/lib/api/client";
 import { cardClass, inputClass, labelClass, primaryButton, secondaryButton } from "./ui";
 
@@ -55,6 +55,86 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
+interface Signup {
+  email: string;
+  name?: string;
+  subscribedAt?: string;
+}
+
+/** Who confirmed through one form, newest first. */
+function SignupsPanel({ formId, listName }: { formId: string; listName: string }) {
+  const [data, setData] = useState<{ signups: Signup[]; total: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      setData(await apiGet<{ signups: Signup[]; total: number }>(`/api/email/forms/${formId}/signups`));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to load signups.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formId]);
+
+  return (
+    <div className="mt-4 rounded-lg border border-slate-200">
+      <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+        <p className="text-xs font-medium text-slate-600">
+          {data ? `${data.total.toLocaleString()} ${data.total === 1 ? "person" : "people"} signed up` : "Signups"} · added to{" "}
+          <strong>{listName}</strong>
+        </p>
+        <button onClick={load} disabled={loading} className="text-slate-400 hover:text-slate-700" aria-label="Refresh signups">
+          <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
+        </button>
+      </div>
+      {error && <p className="p-3 text-xs text-red-600">{error}</p>}
+      {!data && !error && (
+        <p className="flex items-center gap-2 p-3 text-xs text-slate-500">
+          <Loader2 size={13} className="animate-spin" /> Loading…
+        </p>
+      )}
+      {data && data.signups.length === 0 && (
+        <p className="p-3 text-xs text-slate-500">Nobody yet. People show up here once they click the link in the confirmation email.</p>
+      )}
+      {data && data.signups.length > 0 && (
+        <div className="max-h-80 overflow-y-auto">
+          <table className="w-full text-left text-xs">
+            <thead className="sticky top-0 bg-slate-50 text-slate-500">
+              <tr>
+                <th className="px-3 py-1.5 font-medium">Email</th>
+                <th className="px-3 py-1.5 font-medium">Name</th>
+                <th className="px-3 py-1.5 font-medium">Signed up</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {data.signups.map((s) => (
+                <tr key={s.email}>
+                  <td className="px-3 py-1.5 text-slate-800">{s.email}</td>
+                  <td className="px-3 py-1.5 text-slate-600">{s.name || "—"}</td>
+                  <td className="px-3 py-1.5 text-slate-500">{s.subscribedAt ? new Date(s.subscribedAt).toLocaleString() : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {data.total > data.signups.length && (
+            <p className="p-3 text-xs text-slate-400">
+              Showing the latest {data.signups.length.toLocaleString()}. The full list is in Lists → {listName}.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function FormsTab({ senders }: { senders: { domain: string; defaultLocalPart: string }[] }) {
   const [forms, setForms] = useState<SignupFormRow[] | null>(null);
   const [lists, setLists] = useState<{ id: string; name: string }[]>([]);
@@ -65,6 +145,7 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [embedFor, setEmbedFor] = useState<string | null>(null);
+  const [signupsFor, setSignupsFor] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   async function load() {
@@ -296,6 +377,9 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
                     <a href={url} target="_blank" rel="noreferrer" className={secondaryButton}>
                       <ExternalLink size={13} /> Open form
                     </a>
+                    <button onClick={() => setSignupsFor(signupsFor === f.id ? null : f.id)} className={secondaryButton}>
+                      <Users size={13} /> {signupsFor === f.id ? "Hide signups" : "View signups"}
+                    </button>
                     <CopyButton text={url} label="Copy link" />
                     <button onClick={() => setEmbedFor(embedFor === f.id ? null : f.id)} className={secondaryButton}>
                       {embedFor === f.id ? "Hide embed code" : "Embed code"}
@@ -327,6 +411,7 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
                     )}
                   </div>
                 </div>
+                {signupsFor === f.id && <SignupsPanel formId={f.id} listName={f.listName} />}
                 {embedFor === f.id && (
                   <div className="mt-4 space-y-3">
                     <div>

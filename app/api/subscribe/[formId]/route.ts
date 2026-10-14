@@ -32,14 +32,20 @@ async function loadForm(formId: string) {
   return SignupForm.findOne({ _id: formId, active: true });
 }
 
-function formHtml(form: { heading: string; description?: string; buttonText: string; askName: boolean }, action: string, error?: string) {
+function formHtml(
+  form: { heading: string; description?: string; buttonText: string; askName: boolean },
+  action: string,
+  error?: string,
+  prefill: { email?: string; name?: string } = {}
+) {
+  const value = (v?: string) => (v ? ` value="${escapeHtml(v)}"` : "");
   return (
     `<h1>${escapeHtml(form.heading)}</h1>` +
     (form.description ? `<p>${escapeHtml(form.description)}</p>` : "") +
     (error ? `<p style="color:#dc2626">${escapeHtml(error)}</p>` : "") +
     `<form method="post" action="${escapeHtml(action)}">` +
-    (form.askName ? `<label for="name">Name</label><input id="name" name="name" type="text" autocomplete="name" maxlength="200">` : "") +
-    `<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required maxlength="254">` +
+    (form.askName ? `<label for="name">Name</label><input id="name" name="name" type="text" autocomplete="name" maxlength="200"${value(prefill.name)}>` : "") +
+    `<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required maxlength="254"${value(prefill.email)}>` +
     // Honeypot: hidden from people, filled in by most bots. Deliberately
     // not named or labelled like anything a browser autofills (it used to
     // be "website", which Chrome filled in for real people).
@@ -57,7 +63,14 @@ export async function GET(req: NextRequest, { params }: Params) {
   const { formId } = await params;
   const form = await loadForm(formId);
   if (!form) return publicPage("Form not available", "<h1>Form not available</h1><p>This signup form doesn't exist or has been turned off.</p>", 404);
-  return publicPage(form.heading, formHtml(form, req.nextUrl.pathname));
+  // ?email=... (and ?name=...) fill the form in -- the "Insert signup
+  // form" button in Compose links here with the reader's address. Emails
+  // can't contain spaces, so a space is a "+" that got decoded.
+  const q = req.nextUrl.searchParams;
+  const email = (q.get("email") ?? "").trim().replace(/ /g, "+").slice(0, 254);
+  const name = (q.get("name") ?? "").trim().slice(0, 200);
+  const prefill = { email: isValidEmail(email) ? email : undefined, name: name || undefined };
+  return publicPage(form.heading, formHtml(form, req.nextUrl.pathname, undefined, prefill));
 }
 
 export async function POST(req: NextRequest, { params }: Params) {

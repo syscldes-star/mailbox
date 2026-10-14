@@ -36,10 +36,11 @@ import {
   Link2,
   Info,
   Paperclip,
+  FormInput,
 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiDelete, apiUpload, ApiError } from "@/lib/api/client";
 import { parseRecipients, recipientsToCsv, MAX_RECIPIENTS_PER_JOB, type ParseResult } from "@/lib/bulk-email/recipients";
-import { extractTags, renderTemplate, withFooter } from "@/lib/bulk-email/template";
+import { escapeHtml, extractTags, renderTemplate, withFooter } from "@/lib/bulk-email/template";
 import { campaignSlug } from "@/lib/bulk-email/tracking";
 import { extractLinks, runPresendChecks } from "@/lib/bulk-email/presend-check";
 import SettingsTab from "@/components/bulk-email/SettingsTab";
@@ -51,7 +52,7 @@ import ContactProfile from "@/components/bulk-email/ContactProfile";
 import FormsTab from "@/components/bulk-email/FormsTab";
 import OverviewTab from "@/components/bulk-email/OverviewTab";
 import ListPicker from "@/components/bulk-email/ListPicker";
-import VisualEditor, { insertTextAtCaret, isVisualSafe } from "@/components/bulk-email/VisualEditor";
+import VisualEditor, { insertHtmlAtCaret, insertTextAtCaret, isVisualSafe } from "@/components/bulk-email/VisualEditor";
 
 interface SenderDomain {
   domain: string;
@@ -137,6 +138,14 @@ interface ComposeDraft {
   trackClicks?: boolean;
   utm?: { source: string; medium: string; campaign: string };
   attachments?: DraftAttachment[];
+}
+
+interface ComposeSignupForm {
+  id: string;
+  name: string;
+  listName: string;
+  buttonText: string;
+  active: boolean;
 }
 
 interface DraftAttachment {
@@ -252,6 +261,8 @@ export default function BulkEmailPanel() {
   const [utmMedium, setUtmMedium] = useState("email");
   const [utmCampaign, setUtmCampaign] = useState("");
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
+  const [signupForms, setSignupForms] = useState<{ forms: ComposeSignupForm[]; baseUrl: string } | null>(null);
+  const [showFormPicker, setShowFormPicker] = useState(false);
   const [uploading, setUploading] = useState(false);
   const attachInput = useRef<HTMLInputElement>(null);
   const [profileEmail, setProfileEmail] = useState<string | null>(null);
@@ -584,6 +595,33 @@ export default function BulkEmailPanel() {
   function insertTag(tag: string) {
     if (bodyView === "visual" && insertTextAtCaret(visualEditorEl.current, `{{${tag}}}`)) return;
     setBodyHtml((b) => b + `{{${tag}}}`);
+    if (bodyView === "preview") setBodyView(visualSafe ? "visual" : "html");
+  }
+
+  async function openFormPicker() {
+    setShowFormPicker((v) => !v);
+    if (signupForms) return;
+    try {
+      const res = await apiGet<{ forms: ComposeSignupForm[]; baseUrl: string }>("/api/email/forms");
+      setSignupForms({ forms: res.forms, baseUrl: res.baseUrl.replace(/\/+$/, "") });
+    } catch {
+      setSignupForms({ forms: [], baseUrl: "" });
+    }
+  }
+
+  /** Puts a button linking to the signup form into the email. The link
+   * carries {{email}} so the form opens with the reader's address filled
+   * in; they still confirm by email before they're added to the list. */
+  function insertSignupForm(form: ComposeSignupForm) {
+    if (!signupForms) return;
+    const url = `${signupForms.baseUrl}/api/subscribe/${form.id}?email={{email}}`;
+    const label = escapeHtml(form.buttonText || "Subscribe");
+    const html =
+      `<p style="text-align:center"><a href="${url}" style="display:inline-block;background:#4f46e5;color:#ffffff;` +
+      `padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">${label}</a></p>`;
+    setShowFormPicker(false);
+    if (bodyView === "visual" && insertHtmlAtCaret(visualEditorEl.current, html)) return;
+    setBodyHtml((b) => b + html);
     if (bodyView === "preview") setBodyView(visualSafe ? "visual" : "html");
   }
 
@@ -1028,6 +1066,50 @@ export default function BulkEmailPanel() {
                     {`{{${tag}}}`}
                   </button>
                 ))}
+                <span className="relative ml-auto">
+                  <button
+                    type="button"
+                    onClick={openFormPicker}
+                    className="flex items-center gap-1 rounded-full border border-slate-200 px-2.5 py-0.5 text-slate-600 hover:bg-slate-50"
+                  >
+                    <FormInput size={12} /> Insert signup form <ChevronDown size={12} />
+                  </button>
+                  {showFormPicker && (
+                    <div className="absolute right-0 z-20 mt-1 w-72 rounded-lg border border-slate-200 bg-white p-1 shadow-lg">
+                      {!signupForms ? (
+                        <p className="flex items-center gap-2 p-2 text-slate-500">
+                          <Loader2 size={13} className="animate-spin" /> Loading forms…
+                        </p>
+                      ) : signupForms.forms.filter((f) => f.active).length === 0 ? (
+                        <p className="p-2 text-slate-500">
+                          No live signup forms yet.{" "}
+                          <button type="button" onClick={() => setTab("forms")} className="text-indigo-600 underline">
+                            Create one
+                          </button>
+                        </p>
+                      ) : (
+                        <>
+                          {signupForms.forms
+                            .filter((f) => f.active)
+                            .map((f) => (
+                              <button
+                                key={f.id}
+                                type="button"
+                                onClick={() => insertSignupForm(f)}
+                                className="block w-full rounded-md px-2 py-1.5 text-left hover:bg-slate-50"
+                              >
+                                <span className="font-medium text-slate-800">{f.name}</span>
+                                <span className="block text-slate-500">Adds to {f.listName}</span>
+                              </button>
+                            ))}
+                          <p className="border-t border-slate-100 p-2 text-slate-400">
+                            Adds a button to the email. Readers who fill in the form and confirm are added to the form&apos;s list.
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </span>
               </div>
               {/* Attachments */}
               <div className="rounded-lg border border-slate-200 p-3">
