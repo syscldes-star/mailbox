@@ -161,7 +161,9 @@ export async function processBulkJob(jobId: string): Promise<void> {
                   ? { status: "skipped", error: "On Oracle's suppression list (prior bounce or complaint)" }
                   : { status: "sent", messageId: result.messageId, sentAt: new Date() };
               } catch (err) {
-                update = { status: "failed", error: (err instanceof Error ? err.message : String(err)).slice(0, 500) };
+                const reason = err instanceof Error ? err.message : String(err);
+                console.error(`[bulk-email] send to ${r.email} failed (job ${jobId}): ${reason}`);
+                update = { status: "failed", error: reason.slice(0, 500) };
               }
             }
             const written = await BulkRecipient.updateOne({ _id: r._id, status: "pending" }, { $set: update });

@@ -23,7 +23,14 @@ function getClient(): emaildp.EmailDPClient {
     null,
     common.Region.fromRegionId(process.env.OCI_REGION!)
   );
-  cachedClient = new emaildp.EmailDPClient({ authenticationDetailsProvider: provider });
+  // The SDK's own retries are off: by default it retries a failing call
+  // up to 8 times over ~2 minutes, silently. sendEmail's caller already
+  // retries briefly (sendWithRetry), and a send stuck that long would
+  // look stalled to the resume logic.
+  cachedClient = new emaildp.EmailDPClient(
+    { authenticationDetailsProvider: provider },
+    { retryConfiguration: common.NoRetryConfigurationDetails }
+  );
   return cachedClient;
 }
 
@@ -110,11 +117,20 @@ export async function sendEmail(message: OutgoingEmail): Promise<SendResult> {
       suppressed: (submitted.suppressedRecipients ?? []).length > 0,
     };
   } catch (err) {
-    const status = (err as { statusCode?: number }).statusCode;
-    const msg = err instanceof Error ? err.message : String(err);
-    // 429 (rate limit) and 5xx are worth retrying; 4xx (bad address,
-    // unapproved sender, oversized message) will fail the same way again.
-    const retryable = status === undefined || status === 429 || status >= 500;
-    throw new SendError(status ? `${status}: ${msg}` : msg, retryable);
+    throw toSendError(err);
   }
+}
+
+/** Turns an OCI SDK error (a plain object, which logs as
+ * "[object Object]") into a readable SendError. */
+function toSendError(err: unknown): SendError {
+  const e = (err ?? {}) as { statusCode?: number; serviceCode?: string; message?: string; opcRequestId?: string };
+  const status = e.statusCode;
+  const message = e.message || (err instanceof Error ? err.message : "") || JSON.stringify(err) || String(err);
+  const parts = [status && String(status), e.serviceCode, message].filter(Boolean).join(" ");
+  // 429 (rate limit), 5xx and network errors are worth retrying; 4xx
+  // (bad address, unapproved sender, oversized message) will fail the
+  // same way again.
+  const retryable = status === undefined || status === -1 || status === 429 || status >= 500;
+  return new SendError(e.opcRequestId ? `${parts} (request ${e.opcRequestId})` : parts, retryable);
 }
