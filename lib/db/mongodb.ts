@@ -1,6 +1,20 @@
 import mongoose from "mongoose";
 
+/**
+ * Two databases:
+ *  - MONGODB_URI: the platform's main database, shared with main/site.
+ *    Users, workspace memberships, websites and custom domains live
+ *    here, and this app only reads them.
+ *  - EMAIL_MONGODB_URI: this app's own database, holding everything the
+ *    email service writes (domain provisioning state, bulk sends,
+ *    unsubscribes). Optional -- when unset, those collections stay in
+ *    the main database as before.
+ *
+ * Email models register on emailDb() rather than the default mongoose
+ * connection, which is what routes them to the right database.
+ */
 const MONGODB_URI = process.env.MONGODB_URI;
+const EMAIL_MONGODB_URI = process.env.EMAIL_MONGODB_URI;
 
 /**
  * Next.js dev mode hot-reloads modules on every file save, which would
@@ -12,6 +26,8 @@ const MONGODB_URI = process.env.MONGODB_URI;
 interface MongooseCache {
   conn: typeof mongoose | null;
   promise: Promise<typeof mongoose> | null;
+  emailConn?: mongoose.Connection;
+  emailPromise?: Promise<mongoose.Connection> | null;
 }
 
 declare global {
@@ -21,7 +37,17 @@ declare global {
 const cache: MongooseCache = global.__mongooseCache ?? { conn: null, promise: null };
 global.__mongooseCache = cache;
 
-export async function connectToDatabase(): Promise<typeof mongoose> {
+/** The connection email models register on. Creating it doesn't wait
+ * for it to open -- connectToDatabase() does that. */
+export function emailDb(): mongoose.Connection {
+  if (!EMAIL_MONGODB_URI) return mongoose.connection;
+  if (!cache.emailConn) {
+    cache.emailConn = mongoose.createConnection(EMAIL_MONGODB_URI, { bufferCommands: false });
+  }
+  return cache.emailConn;
+}
+
+async function connectMain(): Promise<typeof mongoose> {
   if (cache.conn) {
     return cache.conn;
   }
@@ -48,4 +74,31 @@ export async function connectToDatabase(): Promise<typeof mongoose> {
   }
 
   return cache.conn;
+}
+
+async function connectEmail(): Promise<void> {
+  if (!EMAIL_MONGODB_URI) return;
+  if (!cache.emailPromise) {
+    const conn = emailDb();
+    // After a failed attempt, reopen the same connection object rather
+    // than creating a new one -- the email models are bound to it.
+    cache.emailPromise =
+      conn.readyState === mongoose.ConnectionStates.disconnected
+        ? conn.openUri(EMAIL_MONGODB_URI, { bufferCommands: false })
+        : conn.asPromise();
+  }
+  try {
+    await cache.emailPromise;
+  } catch (error) {
+    // Same retry-on-next-request behavior as the main connection.
+    cache.emailPromise = null;
+    throw error;
+  }
+}
+
+/** Opens both databases. Every route and worker calls this before
+ * touching any model, so both are always ready. */
+export async function connectToDatabase(): Promise<typeof mongoose> {
+  const [main] = await Promise.all([connectMain(), connectEmail()]);
+  return main;
 }

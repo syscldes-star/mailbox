@@ -3,7 +3,8 @@
 // Per-workspace "do not email" list. Populated by the public unsubscribe
 // link included in every bulk email; bulk sends skip any address on it.
 
-import mongoose, { Schema, type Document, type Model } from "mongoose";
+import { Schema, type Document, type Model } from "mongoose";
+import { emailDb } from "../db/mongodb";
 
 export interface IEmailSuppression extends Document {
   workspaceId: string;
@@ -24,6 +25,6 @@ const EmailSuppressionSchema = new Schema<IEmailSuppression>(
 
 EmailSuppressionSchema.index({ workspaceId: 1, email: 1 }, { unique: true });
 
+const db = emailDb();
 export const EmailSuppression: Model<IEmailSuppression> =
-  mongoose.models.EmailSuppression ??
-  mongoose.model<IEmailSuppression>("EmailSuppression", EmailSuppressionSchema);
+  (db.models.EmailSuppression as Model<IEmailSuppression> | undefined) ?? db.model<IEmailSuppression>("EmailSuppression", EmailSuppressionSchema);

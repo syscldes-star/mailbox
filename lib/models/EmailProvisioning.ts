@@ -1,11 +1,11 @@
 // lib/models/EmailProvisioning.ts
 //
 // Persists the provisioning pipeline's progress per domain. Lives in the
-// same MongoDB database as User/WorkspaceMember (connectToDatabase points
-// at the same MONGODB_URI as main/site) so this app is genuinely part of
-// the same platform, not an island.
+// email service's own database (EMAIL_MONGODB_URI) when that's set,
+// otherwise alongside User/WorkspaceMember in the main database.
 
-import mongoose, { Schema, type Document, type Model } from "mongoose";
+import { Schema, type Document, type Model } from "mongoose";
+import { emailDb } from "../db/mongodb";
 import type { ProvisioningStep, StepStatus } from "../email-provisioning/types";
 
 export interface IEmailProvisioning extends Document {
@@ -52,6 +52,6 @@ const EmailProvisioningSchema = new Schema<IEmailProvisioning>(
   { timestamps: true }
 );
 
+const db = emailDb();
 export const EmailProvisioning: Model<IEmailProvisioning> =
-  mongoose.models.EmailProvisioning ??
-  mongoose.model<IEmailProvisioning>("EmailProvisioning", EmailProvisioningSchema);
+  (db.models.EmailProvisioning as Model<IEmailProvisioning> | undefined) ?? db.model<IEmailProvisioning>("EmailProvisioning", EmailProvisioningSchema);
