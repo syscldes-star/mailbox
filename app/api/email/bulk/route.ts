@@ -1,16 +1,22 @@
 // app/api/email/bulk/route.ts
 //
 // Session-cookie protected. GET lists this workspace's bulk sends (with
-// per-status counts, not the full recipient list) plus the domains it can
-// send from; POST creates a job and starts delivering it in the
-// background.
+// their running totals) plus the domains it can send from. POST creates a
+// send in "preparing" state; Compose then uploads recipients in batches
+// (POST /api/email/bulk/[id]/recipients) and starts it with
+// PATCH {action: "start"} -- batching keeps each request small enough for
+// any reverse proxy's body-size limit, even for very large lists.
 
 import { NextRequest } from "next/server";
+import mongoose from "mongoose";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { BulkEmailJob } from "@/lib/models/BulkEmailJob";
-import { isValidEmail, MAX_RECIPIENTS_PER_JOB } from "@/lib/bulk-email/recipients";
-import { resumeStaleJobs, startBulkJob } from "@/lib/bulk-email/process-job";
+import { User } from "@/lib/models/User";
+import { isValidEmail } from "@/lib/bulk-email/recipients";
+import { resumeStaleJobs } from "@/lib/bulk-email/process-job";
+import { getEmailSettings } from "@/lib/bulk-email/settings";
+import { resolveAttachments } from "@/lib/bulk-email/attachments";
 import { LOCAL_PART_PATTERN, MIN_SEND_ROLE, loadSenderDomains, publicBaseUrl } from "@/lib/bulk-email/access";
 
 export async function GET() {
@@ -19,42 +25,44 @@ export async function GET() {
 
   await resumeStaleJobs(auth.workspaceId);
 
-  const [senders, jobs] = await Promise.all([
+  const [senders, settings, jobs] = await Promise.all([
     loadSenderDomains(auth.workspaceId),
-    BulkEmailJob.aggregate([
-      { $match: { workspaceId: auth.workspaceId } },
-      { $sort: { createdAt: -1 } },
-      { $limit: 50 },
-      {
-        $project: {
-          fromDomain: 1,
-          fromLocalPart: 1,
-          fromName: 1,
-          subject: 1,
-          status: 1,
-          error: 1,
-          createdAt: 1,
-          completedAt: 1,
-          total: { $size: "$recipients" },
-          sent: { $size: { $filter: { input: "$recipients", cond: { $eq: ["$$this.status", "sent"] } } } },
-          failed: { $size: { $filter: { input: "$recipients", cond: { $eq: ["$$this.status", "failed"] } } } },
-          skipped: { $size: { $filter: { input: "$recipients", cond: { $eq: ["$$this.status", "skipped"] } } } },
-          opened: {
-            $size: {
-              $filter: { input: "$recipients", cond: { $ne: [{ $ifNull: ["$$this.openedAt", null] }, null] } },
-            },
-          },
-          trackOpens: 1,
-        },
-      },
-    ]),
+    getEmailSettings(auth.workspaceId),
+    BulkEmailJob.find({ workspaceId: auth.workspaceId, status: { $ne: "preparing" } })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .select("fromDomain fromLocalPart fromName subject status error createdAt completedAt scheduledAt counts trackOpens trackClicks createdBy")
+      .lean(),
   ]);
+
+  // Names of the people who created each send (users live in the main database).
+  const creatorIds = [...new Set(jobs.map((j) => j.createdBy).filter((id) => mongoose.isValidObjectId(id)))];
+  const creators = new Map(
+    (await User.find({ _id: { $in: creatorIds } }).select("firstName lastName email").lean()).map((u) => [
+      String(u._id),
+      `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim() || u.email,
+    ])
+  );
 
   return apiSuccess({
     senders,
     canSend: hasMinimumRole(auth.membership.role, MIN_SEND_ROLE),
-    jobs: jobs.map(({ _id, ...rest }) => ({ id: String(_id), ...rest })),
+    settings,
+    jobs: jobs.map(({ _id, counts, ...rest }) => ({
+      id: String(_id),
+      ...rest,
+      ...counts,
+      createdByName: creators.get(rest.createdBy) ?? "Unknown",
+    })),
   });
+}
+
+/** Trims UTM values to safe, short strings; no tags if all are empty. */
+function cleanUtm(utm?: { source?: string; medium?: string; campaign?: string }) {
+  if (!utm) return undefined;
+  const clean = (v?: string) => String(v ?? "").trim().slice(0, 100);
+  const out = { source: clean(utm.source), medium: clean(utm.medium), campaign: clean(utm.campaign) };
+  return out.source || out.medium || out.campaign ? out : undefined;
 }
 
 interface CreateBody {
@@ -65,7 +73,11 @@ interface CreateBody {
   subject?: string;
   bodyHtml?: string;
   trackOpens?: boolean;
-  recipients?: { email?: string; name?: string; vars?: Record<string, unknown> }[];
+  trackClicks?: boolean;
+  preheader?: string;
+  scheduledAt?: string;
+  utm?: { source?: string; medium?: string; campaign?: string };
+  attachmentIds?: string[];
 }
 
 export async function POST(req: NextRequest) {
@@ -81,6 +93,18 @@ export async function POST(req: NextRequest) {
   const subject = body.subject?.trim();
   const bodyHtml = body.bodyHtml?.trim();
   const replyTo = body.replyTo?.trim() || undefined;
+  const preheader = body.preheader?.trim().slice(0, 300) || undefined;
+
+  let scheduledAt: Date | undefined;
+  if (body.scheduledAt) {
+    scheduledAt = new Date(body.scheduledAt);
+    const now = Date.now();
+    if (Number.isNaN(scheduledAt.getTime())) return apiError("Scheduled time isn't a valid date.", 400);
+    if (scheduledAt.getTime() < now + 60_000) return apiError("Pick a scheduled time at least a minute from now.", 400);
+    if (scheduledAt.getTime() > now + 90 * 24 * 60 * 60 * 1000) {
+      return apiError("Sends can be scheduled up to 90 days ahead.", 400);
+    }
+  }
 
   if (!fromDomain || !fromLocalPart || !subject || !bodyHtml) {
     return apiError("fromDomain, fromLocalPart, subject, and bodyHtml are required.", 400);
@@ -97,25 +121,15 @@ export async function POST(req: NextRequest) {
     return apiError("That domain isn't ready to send from yet (it needs an active approved sender).", 403);
   }
 
-  // Re-validate and de-duplicate server-side -- never trust the
-  // browser's own parse of the recipient list.
-  const seen = new Set<string>();
-  const recipients = [];
-  for (const r of body.recipients ?? []) {
-    const email = (r.email ?? "").trim().toLowerCase();
-    if (!isValidEmail(email) || seen.has(email)) continue;
-    seen.add(email);
-    const vars: Record<string, string> = {};
-    for (const [k, v] of Object.entries(r.vars ?? {})) {
-      if (/^[a-z0-9_]{1,64}$/.test(k)) vars[k] = String(v ?? "").slice(0, 1000);
-    }
-    recipients.push({ email, name: r.name?.trim().slice(0, 200) || undefined, vars, status: "pending" as const });
+  const settings = await getEmailSettings(auth.workspaceId);
+  if (!settings.postalAddress) {
+    return apiError(
+      "Add your business postal address in Email Marketing → Settings first. Anti-spam laws require it in marketing email.",
+      400
+    );
   }
-
-  if (recipients.length === 0) return apiError("Add at least one valid recipient.", 400);
-  if (recipients.length > MAX_RECIPIENTS_PER_JOB) {
-    return apiError(`A single send is limited to ${MAX_RECIPIENTS_PER_JOB} recipients.`, 400);
-  }
+  const attached = await resolveAttachments(auth.workspaceId, body.attachmentIds);
+  if ("error" in attached) return apiError(attached.error!, 400);
 
   const job = await BulkEmailJob.create({
     workspaceId: auth.workspaceId,
@@ -125,14 +139,17 @@ export async function POST(req: NextRequest) {
     fromName: body.fromName?.trim() || undefined,
     replyTo,
     subject,
+    preheader,
     bodyHtml,
     trackOpens: body.trackOpens !== false,
+    trackClicks: body.trackClicks !== false,
+    utm: cleanUtm(body.utm),
+    attachmentIds: attached.attachments!.length ? attached.attachments!.map((a) => a.id) : undefined,
     publicBaseUrl: publicBaseUrl(req),
-    recipients,
-    status: "sending",
+    postalAddress: settings.postalAddress,
+    status: "preparing",
+    scheduledAt,
   });
 
-  startBulkJob(String(job._id));
-
-  return apiSuccess({ id: String(job._id), total: recipients.length }, "Bulk send started.", 201);
+  return apiSuccess({ id: String(job._id) }, "Send created -- upload recipients, then start it.", 201);
 }

@@ -102,3 +102,19 @@ export async function connectToDatabase(): Promise<typeof mongoose> {
   const [main] = await Promise.all([connectMain(), connectEmail()]);
   return main;
 }
+
+/**
+ * Registers an email-database model. In development the model is always
+ * rebuilt from its current schema: Next's hot reload keeps the old
+ * compiled model on the cached connection, so a schema change (a new
+ * field or status) would otherwise be silently ignored until the dev
+ * server restarted. In production each model is compiled once.
+ */
+export function emailModel<T>(name: string, schema: mongoose.Schema<T>): mongoose.Model<T> {
+  const db = emailDb();
+  if (db.models[name]) {
+    if (process.env.NODE_ENV === "production") return db.models[name] as mongoose.Model<T>;
+    db.deleteModel(name);
+  }
+  return db.model<T>(name, schema);
+}

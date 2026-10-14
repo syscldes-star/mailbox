@@ -9,19 +9,30 @@
 
 import { waitUntil } from "@vercel/functions";
 import { connectToDatabase } from "../db/mongodb";
-import { BulkEmailJob, type IBulkRecipient } from "../models/BulkEmailJob";
+import { BulkEmailJob, incCounts, type JobCounts } from "../models/BulkEmailJob";
+import { BulkRecipient, type IBulkRecipient } from "../models/BulkRecipient";
 import { EmailSuppression } from "../models/EmailSuppression";
 import { sendEmail, SendError, type OutgoingEmail } from "./sender";
-import { htmlToText, renderTemplate, withUnsubscribeFooter } from "./template";
+import { htmlToText, renderTemplate, withFooter, withPreheader } from "./template";
 import { unsubscribeUrl } from "./unsubscribe";
-import { openPixelUrl, withOpenPixel } from "./tracking";
+import { loadAttachmentData } from "./attachments";
+import { addUtmTags, clickTrackingUrl, openPixelUrl, rewriteLinks, withOpenPixel, type UtmTags } from "./tracking";
 
 const CONCURRENCY = Math.max(1, Number(process.env.BULK_EMAIL_CONCURRENCY) || 5);
 const RATE_PER_SECOND = Math.max(1, Number(process.env.BULK_EMAIL_RATE_PER_SECOND) || 10);
 const MAX_ATTEMPTS = 3;
+/** Recipients loaded per database round trip. */
+const BATCH_SIZE = 500;
 /** A "sending" job not touched for this long is assumed orphaned. Must
  * comfortably exceed the slowest single send including retries. */
 export const HEARTBEAT_STALE_MS = 2 * 60_000;
+
+const SKIP_REASON: Record<string, string> = {
+  unsubscribed: "Unsubscribed",
+  bounced: "Bounced on an earlier send",
+  complained: "Marked an earlier email as spam",
+  manual: "On your do-not-email list",
+};
 
 export interface MessageSource {
   workspaceId: string;
@@ -30,21 +41,30 @@ export interface MessageSource {
   fromName?: string;
   replyTo?: string;
   subject: string;
+  preheader?: string;
   bodyHtml: string;
   publicBaseUrl: string;
+  postalAddress?: string;
+  utm?: UtmTags;
 }
 
 /** Renders the job's template for one recipient. Shared with the
  * "send test" route so a test email matches the real thing exactly. */
 export function buildMessage(
   source: MessageSource,
-  recipient: Pick<IBulkRecipient, "email" | "name" | "vars">,
-  openPixel?: string
+  recipient: { email: string; name?: string; vars?: Record<string, string> },
+  tracking: { openPixel?: string; wrapLink?: (url: string) => string } = {}
 ): OutgoingEmail {
   const unsubscribe = unsubscribeUrl(source.publicBaseUrl, source.workspaceId, recipient.email);
   const vars = { ...(recipient.vars ?? {}), email: recipient.email, name: recipient.name ?? "", unsubscribe_url: unsubscribe };
-  const rendered = renderTemplate(withUnsubscribeFooter(source.bodyHtml), vars, { html: true });
-  const html = openPixel ? withOpenPixel(rendered, openPixel) : rendered;
+  const rendered = renderTemplate(withPreheader(withFooter(source.bodyHtml, source.postalAddress), source.preheader), vars, { html: true });
+  // Links are tagged and wrapped after rendering so merge tags inside
+  // URLs are already filled in; the unsubscribe link is never touched.
+  // UTM tags go on first, so the click redirect lands on the tagged URL.
+  const isUnsubscribe = (url: string) => url === unsubscribe;
+  const tagged = source.utm ? rewriteLinks(rendered, (url) => addUtmTags(url, source.utm!), isUnsubscribe) : rendered;
+  const linked = tracking.wrapLink ? rewriteLinks(tagged, tracking.wrapLink, isUnsubscribe) : tagged;
+  const html = tracking.openPixel ? withOpenPixel(linked, tracking.openPixel) : linked;
   return {
     from: { email: `${source.fromLocalPart}@${source.fromDomain}`, name: source.fromName },
     to: { email: recipient.email, name: recipient.name },
@@ -90,53 +110,72 @@ export async function processBulkJob(jobId: string): Promise<void> {
   try {
     const job = await BulkEmailJob.findById(jobId).lean();
     if (!job) return;
+    // Loaded once and reused for every recipient.
+    const attachments = await loadAttachmentData(job.attachmentIds ?? []);
 
-    const pending = job.recipients
-      .map((r, index) => ({ r, index }))
-      .filter(({ r }) => r.status === "pending");
+    // Work through pending recipients a batch at a time, in list order.
+    // Each recipient leaves "pending" as soon as it's handled, so the
+    // next query naturally starts after it -- and a restarted worker
+    // picks up exactly where this one stopped.
+    for (;;) {
+      const batch = await BulkRecipient.find({ jobId: job._id, status: "pending" })
+        .sort({ index: 1 })
+        .limit(BATCH_SIZE)
+        .lean();
+      if (batch.length === 0) break;
 
-    const suppressed = new Set(
-      (
-        await EmailSuppression.find({
-          workspaceId: job.workspaceId,
-          email: { $in: pending.map(({ r }) => r.email) },
-        }).select("email")
-      ).map((s) => s.email)
-    );
-
-    for (let i = 0; i < pending.length; i += CONCURRENCY) {
-      const chunkStarted = Date.now();
-
-      // Checked between chunks so Cancel takes effect within a second
-      // or two rather than after the whole list.
-      const current = await BulkEmailJob.findById(jobId).select("status").lean();
-      if (current?.status !== "sending") return;
-
-      const chunk = pending.slice(i, i + CONCURRENCY);
-      await Promise.all(
-        chunk.map(async ({ r, index }) => {
-          const path = `recipients.${index}`;
-          let update: Record<string, unknown>;
-          if (suppressed.has(r.email)) {
-            update = { [`${path}.status`]: "skipped", [`${path}.error`]: "Unsubscribed" };
-          } else {
-            try {
-              const pixel = job.trackOpens ? openPixelUrl(job.publicBaseUrl, jobId, index) : undefined;
-              const result = await sendWithRetry(buildMessage(job, r, pixel));
-              update = result.suppressed
-                ? { [`${path}.status`]: "skipped", [`${path}.error`]: "On Oracle's suppression list (prior bounce or complaint)" }
-                : { [`${path}.status`]: "sent", [`${path}.messageId`]: result.messageId, [`${path}.sentAt`]: new Date() };
-            } catch (err) {
-              update = { [`${path}.status`]: "failed", [`${path}.error`]: (err instanceof Error ? err.message : String(err)).slice(0, 500) };
-            }
-          }
-          await BulkEmailJob.updateOne({ _id: jobId }, { $set: { ...update, heartbeatAt: new Date() } });
-        })
+      const suppressed = new Map(
+        (
+          await EmailSuppression.find({ workspaceId: job.workspaceId, email: { $in: batch.map((r) => r.email) } }).select("email reason")
+        ).map((s) => [s.email, s.reason])
       );
 
-      const minChunkMs = (chunk.length / RATE_PER_SECOND) * 1000;
-      const elapsed = Date.now() - chunkStarted;
-      if (elapsed < minChunkMs) await sleep(minChunkMs - elapsed);
+      for (let i = 0; i < batch.length; i += CONCURRENCY) {
+        const chunkStarted = Date.now();
+
+        // Checked between chunks so Cancel takes effect within a second
+        // or two rather than after the whole list.
+        const current = await BulkEmailJob.findById(jobId).select("status").lean();
+        if (current?.status !== "sending") return;
+
+        const chunk = batch.slice(i, i + CONCURRENCY);
+        const delta: Partial<JobCounts> = {};
+        const bump = (key: keyof JobCounts) => (delta[key] = (delta[key] ?? 0) + 1);
+
+        await Promise.all(
+          chunk.map(async (r) => {
+            let update: Partial<IBulkRecipient>;
+            const suppressedReason = suppressed.get(r.email);
+            if (suppressedReason) {
+              update = { status: "skipped", error: SKIP_REASON[suppressedReason] };
+            } else {
+              try {
+                const result = await sendWithRetry({
+                  ...buildMessage(job, r, {
+                    openPixel: job.trackOpens ? openPixelUrl(job.publicBaseUrl, jobId, r.index) : undefined,
+                    wrapLink: job.trackClicks ? (url) => clickTrackingUrl(job.publicBaseUrl, jobId, r.index, url) : undefined,
+                  }),
+                  attachments,
+                });
+                update = result.suppressed
+                  ? { status: "skipped", error: "On Oracle's suppression list (prior bounce or complaint)" }
+                  : { status: "sent", messageId: result.messageId, sentAt: new Date() };
+              } catch (err) {
+                const reason = err instanceof Error ? err.message : String(err);
+                console.error(`[bulk-email] send to ${r.email} failed (job ${jobId}): ${reason}`);
+                update = { status: "failed", error: reason.slice(0, 500) };
+              }
+            }
+            const written = await BulkRecipient.updateOne({ _id: r._id, status: "pending" }, { $set: update });
+            if (written.modifiedCount === 1) bump(update.status as keyof JobCounts);
+          })
+        );
+        await incCounts(jobId, delta, { heartbeatAt: new Date() });
+
+        const minChunkMs = (chunk.length / RATE_PER_SECOND) * 1000;
+        const elapsed = Date.now() - chunkStarted;
+        if (elapsed < minChunkMs) await sleep(minChunkMs - elapsed);
+      }
     }
 
     await BulkEmailJob.updateOne(
@@ -158,16 +197,31 @@ export function startBulkJob(jobId: string): void {
   waitUntil(processBulkJob(jobId).catch((err) => console.error(`[bulk-email] job ${jobId} crashed`, err)));
 }
 
-/** Restarts workers for any of the workspace's jobs whose worker has
- * died. Called from the list/detail routes, so simply having the panel
- * open is enough to recover an interrupted send. */
-export async function resumeStaleJobs(workspaceId: string): Promise<void> {
+/** Restarts workers for any jobs (optionally just one workspace's) whose
+ * worker has died. Called by the scheduler every minute, and from the
+ * list/detail routes so opening the panel also recovers a stuck send. */
+export async function resumeStaleJobs(workspaceId?: string): Promise<void> {
   const stale = await BulkEmailJob.find({
-    workspaceId,
+    ...(workspaceId ? { workspaceId } : {}),
     status: "sending",
     $or: [{ heartbeatAt: null }, { heartbeatAt: { $lt: new Date(Date.now() - HEARTBEAT_STALE_MS) } }],
   }).select("_id");
   for (const job of stale) startBulkJob(String(job._id));
+}
+
+/** Moves scheduled jobs whose time has come to "sending" and starts
+ * them. The status flip is atomic, so a job only ever starts once. */
+export async function startDueScheduledJobs(): Promise<number> {
+  const due = await BulkEmailJob.find({ status: "scheduled", scheduledAt: { $lte: new Date() } }).select("_id");
+  let started = 0;
+  for (const { _id } of due) {
+    const flipped = await BulkEmailJob.updateOne({ _id, status: "scheduled" }, { $set: { status: "sending" } });
+    if (flipped.modifiedCount === 1) {
+      startBulkJob(String(_id));
+      started++;
+    }
+  }
+  return started;
 }
 
 function sleep(ms: number) {

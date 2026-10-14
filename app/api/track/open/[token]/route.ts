@@ -6,7 +6,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/mongodb";
-import { BulkEmailJob } from "@/lib/models/BulkEmailJob";
+import { incCounts } from "@/lib/models/BulkEmailJob";
+import { BulkRecipient } from "@/lib/models/BulkRecipient";
 import { verifyOpenToken } from "@/lib/bulk-email/tracking";
 
 const PIXEL = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
@@ -31,17 +32,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
 
   try {
     await connectToDatabase();
-    const path = `recipients.${parsed.index}`;
     const now = new Date();
     // Only count opens for recipients the email was actually sent to.
-    await BulkEmailJob.updateOne(
-      { _id: parsed.jobId, [`${path}.status`]: "sent" },
-      { $inc: { [`${path}.openCount`]: 1 }, $set: { [`${path}.lastOpenedAt`]: now } }
-    );
-    await BulkEmailJob.updateOne(
-      { _id: parsed.jobId, [`${path}.status`]: "sent", [`${path}.openedAt`]: null },
-      { $set: { [`${path}.openedAt`]: now } }
-    );
+    const sent = { jobId: parsed.jobId, index: parsed.index, status: "sent" };
+    await BulkRecipient.updateOne(sent, { $inc: { openCount: 1 }, $set: { lastOpenedAt: now } });
+    const first = await BulkRecipient.updateOne({ ...sent, openedAt: null }, { $set: { openedAt: now } });
+    if (first.modifiedCount === 1) await incCounts(parsed.jobId, { opened: 1 });
   } catch (err) {
     console.error("[bulk-email] failed to record open", err);
   }
