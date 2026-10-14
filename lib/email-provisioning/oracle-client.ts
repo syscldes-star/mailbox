@@ -168,3 +168,9 @@ export async function waitForSenderActive(senderId: string, timeoutMs = 60_000) 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+/** Current lifecycle state of a DKIM key (e.g. "ACTIVE", "NEEDS_ATTENTION"),
+ * used by the domain health check. */
+export async function getDkimLifecycleState(dkimId: string): Promise<string | undefined> {
+  const { dkim } = await getClient().getDkim({ dkimId });
+  return dkim.lifecycleState;
+}

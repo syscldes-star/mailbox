@@ -45,6 +45,7 @@ import SettingsTab from "@/components/bulk-email/SettingsTab";
 import UnsubscribesTab from "@/components/bulk-email/UnsubscribesTab";
 import TemplatesTab, { type SavedTemplate } from "@/components/bulk-email/TemplatesTab";
 import ListsTab from "@/components/bulk-email/ListsTab";
+import DomainHealth from "@/components/bulk-email/DomainHealth";
 import OverviewTab from "@/components/bulk-email/OverviewTab";
 import ListPicker from "@/components/bulk-email/ListPicker";
 import VisualEditor, { insertTextAtCaret, isVisualSafe } from "@/components/bulk-email/VisualEditor";
@@ -734,6 +735,11 @@ export default function BulkEmailPanel() {
                     ))}
                   </select>
                 </div>
+                {fromDomain && (
+                  <div className="mt-2">
+                    <DomainHealth domain={fromDomain} compact />
+                  </div>
+                )}
               </div>
               <div>
                 <label className={labelClass}>From name</label>

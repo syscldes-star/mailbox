@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, Loader2, Circle, KeyRound, Copy, Plus, Search } from "lucide-react";
 import { apiGet, apiPost, ApiError } from "@/lib/api/client";
 import type { ProvisioningState, StepStatus } from "@/lib/email-provisioning/types";
+import DomainHealth from "@/components/bulk-email/DomainHealth";
 
 const STEP_LABELS: Record<string, string> = {
   oracle_email_domain: "Oracle email domain",
@@ -33,6 +34,7 @@ export default function DomainsPage() {
   const [submitting, setSubmitting] = useState(false);
 
   const [revealedPasswords, setRevealedPasswords] = useState<Record<string, string>>({});
+  const [healthOpen, setHealthOpen] = useState<Record<string, boolean>>({});
 
   async function refresh() {
     try {
@@ -208,6 +210,22 @@ export default function DomainsPage() {
                         {STEP_LABELS[step] ?? step}: {msg}
                       </p>
                     ))}
+                  </div>
+                )}
+
+                {allDone && (
+                  <div className="mt-3 border-t border-slate-100 pt-3">
+                    <button
+                      onClick={() => setHealthOpen((h) => ({ ...h, [state.domain]: !h[state.domain] }))}
+                      className="text-xs font-medium text-indigo-600 hover:underline"
+                    >
+                      {healthOpen[state.domain] ? "Hide email health" : "Check email health (DNS)"}
+                    </button>
+                    {healthOpen[state.domain] && (
+                      <div className="mt-2">
+                        <DomainHealth domain={state.domain} />
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
