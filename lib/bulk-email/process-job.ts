@@ -105,9 +105,14 @@ export async function processBulkJob(jobId: string): Promise<void> {
     const job = await BulkEmailJob.findById(jobId).lean();
     if (!job) return;
 
+    // In an undecided A/B test only the test group goes out now; the
+    // rest wait for the winning subject.
+    const winner = job.abTest?.winner;
     const pending = job.recipients
       .map((r, index) => ({ r, index }))
-      .filter(({ r }) => r.status === "pending");
+      .filter(({ r }) => r.status === "pending" && (r.variant !== "rest" || !!winner));
+    const subjectFor = (variant?: string) =>
+      variant === "B" || (variant === "rest" && winner === "B") ? job.abTest!.subjectB : job.subject;
 
     const suppressed = new Map(
       (
@@ -137,7 +142,7 @@ export async function processBulkJob(jobId: string): Promise<void> {
           } else {
             try {
               const result = await sendWithRetry(
-                buildMessage(job, r, {
+                buildMessage({ ...job, subject: subjectFor(r.variant) }, r, {
                   openPixel: job.trackOpens ? openPixelUrl(job.publicBaseUrl, jobId, index) : undefined,
                   wrapLink: job.trackClicks
                     ? (url) => clickTrackingUrl(job.publicBaseUrl, jobId, index, url)
@@ -160,9 +165,12 @@ export async function processBulkJob(jobId: string): Promise<void> {
       if (elapsed < minChunkMs) await sleep(minChunkMs - elapsed);
     }
 
+    const waitingForWinner = !!job.abTest && !winner && job.recipients.some((r) => r.variant === "rest" && r.status === "pending");
     await BulkEmailJob.updateOne(
       { _id: jobId, status: "sending" },
-      { $set: { status: "completed", completedAt: new Date() }, $unset: { heartbeatAt: 1 } }
+      waitingForWinner
+        ? { $set: { status: "testing" }, $unset: { heartbeatAt: 1 } }
+        : { $set: { status: "completed", completedAt: new Date() }, $unset: { heartbeatAt: 1 } }
     );
   } catch (err) {
     await BulkEmailJob.updateOne(
@@ -204,6 +212,59 @@ export async function startDueScheduledJobs(): Promise<number> {
     }
   }
   return started;
+}
+
+/** Rate of the A/B metric for one variant, among recipients sent to. */
+export function variantStats(recipients: IBulkRecipient[], variant: "A" | "B") {
+  const group = recipients.filter((r) => r.variant === variant && r.status === "sent");
+  const opened = group.filter((r) => r.openedAt).length;
+  const clicked = group.filter((r) => r.clickedAt).length;
+  return {
+    sent: group.length,
+    opened,
+    clicked,
+    openRate: group.length ? opened / group.length : 0,
+    clickRate: group.length ? clicked / group.length : 0,
+  };
+}
+
+/** Picks an A/B winner (by the test's metric unless `force` names one),
+ * then sends the winning subject to everyone else. A tie goes to A. */
+export async function decideAbTest(jobId: string, force?: "A" | "B", by: "auto" | "manual" = "auto"): Promise<"A" | "B" | null> {
+  const job = await BulkEmailJob.findById(jobId).lean();
+  if (!job?.abTest || job.abTest.winner || job.status !== "testing") return null;
+  let winner = force;
+  if (!winner) {
+    const a = variantStats(job.recipients, "A");
+    const b = variantStats(job.recipients, "B");
+    const key = job.abTest.metric === "clicks" ? "clickRate" : "openRate";
+    winner = b[key] > a[key] ? "B" : "A";
+  }
+  const decided = await BulkEmailJob.updateOne(
+    // Only once the test group has finished ("testing"): deciding while it
+    // is still sending would start a second worker alongside the first.
+    { _id: jobId, "abTest.winner": null, status: "testing" },
+    {
+      $set: {
+        "abTest.winner": winner,
+        "abTest.decidedAt": new Date(),
+        "abTest.decidedBy": by,
+        status: "sending",
+      },
+      $unset: { heartbeatAt: 1 },
+    }
+  );
+  if (decided.modifiedCount !== 1) return null;
+  startBulkJob(jobId);
+  return winner;
+}
+
+/** Decides every A/B test whose waiting time is over. */
+export async function decideDueAbTests(): Promise<number> {
+  const due = await BulkEmailJob.find({ status: "testing", "abTest.decideAt": { $lte: new Date() }, "abTest.winner": null }).select("_id");
+  let decided = 0;
+  for (const { _id } of due) if (await decideAbTest(String(_id))) decided++;
+  return decided;
 }
 
 function sleep(ms: number) {

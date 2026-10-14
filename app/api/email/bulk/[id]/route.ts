@@ -4,14 +4,15 @@
 // recipient's outcome, or with ?draft=all|not_opened|not_clicked the
 // message and recipient list needed to send it again from Compose.
 // PATCH {action: "cancel"} stops a send in progress (or a scheduled one)
-// and {action: "retry_failed"} re-queues recipients that failed.
+// and {action: "retry_failed"} re-queues recipients that failed;
+// {action: "ab_decide", variant?} picks an A/B test's winner now.
 
 import { NextRequest } from "next/server";
 import mongoose from "mongoose";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { BulkEmailJob } from "@/lib/models/BulkEmailJob";
-import { resumeStaleJobs, startBulkJob } from "@/lib/bulk-email/process-job";
+import { decideAbTest, resumeStaleJobs, startBulkJob, variantStats } from "@/lib/bulk-email/process-job";
 import { MIN_SEND_ROLE } from "@/lib/bulk-email/access";
 
 type Params = { params: Promise<{ id: string }> };
@@ -56,7 +57,10 @@ export async function GET(req: NextRequest, { params }: Params) {
   if (!job) return apiError("Bulk send not found.", 404);
 
   const { _id, __v, ...rest } = job as typeof job & { __v?: number };
-  return apiSuccess({ id: String(_id), ...rest });
+  const ab = job.abTest
+    ? { ...job.abTest, statsA: variantStats(job.recipients, "A"), statsB: variantStats(job.recipients, "B") }
+    : undefined;
+  return apiSuccess({ id: String(_id), ...rest, abTest: ab });
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {
@@ -68,11 +72,11 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   const { id } = await params;
   if (!mongoose.isValidObjectId(id)) return apiError("Bulk send not found.", 404);
-  const { action } = await req.json();
+  const { action, variant } = await req.json();
 
   if (action === "cancel") {
     const result = await BulkEmailJob.updateOne(
-      { _id: id, workspaceId: auth.workspaceId, status: { $in: ["sending", "scheduled"] } },
+      { _id: id, workspaceId: auth.workspaceId, status: { $in: ["sending", "scheduled", "testing"] } },
       { $set: { status: "cancelled", completedAt: new Date() }, $unset: { heartbeatAt: 1 } }
     );
     if (result.matchedCount === 0) return apiError("That send isn't in progress or scheduled.", 409);
@@ -84,7 +88,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     // recipients; "retry_failed" additionally re-queues failed ones.
     const job = await BulkEmailJob.findOne({ _id: id, workspaceId: auth.workspaceId });
     if (!job) return apiError("Bulk send not found.", 404);
-    if (job.status === "sending" || job.status === "scheduled") {
+    if (job.status === "sending" || job.status === "scheduled" || job.status === "testing") {
       return apiError("That send is already in progress or scheduled.", 409);
     }
 
@@ -108,5 +112,15 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return apiSuccess({ id, status: "sending", requeued, remaining }, "Send restarted.");
   }
 
-  return apiError('action must be "cancel", "resume", or "retry_failed".', 400);
+  if (action === "ab_decide") {
+    const job = await BulkEmailJob.findOne({ _id: id, workspaceId: auth.workspaceId }).select("status abTest").lean();
+    if (!job?.abTest) return apiError("That send isn't an A/B test.", 400);
+    if (job.abTest.winner) return apiError("A winner has already been picked.", 409);
+    if (job.status !== "testing") return apiError("Wait until the test group has finished sending.", 409);
+    const winner = await decideAbTest(id, variant === "A" || variant === "B" ? variant : undefined, "manual");
+    if (!winner) return apiError("Couldn't pick a winner -- refresh and try again.", 409);
+    return apiSuccess({ id, winner }, `Subject ${winner} wins -- sending it to everyone else now.`);
+  }
+
+  return apiError('action must be "cancel", "resume", "retry_failed" or "ab_decide".', 400);
 }

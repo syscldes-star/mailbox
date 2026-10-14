@@ -4,13 +4,13 @@
 // instrumentation.ts. The app runs as a single long-lived pm2 process,
 // so a plain interval is enough -- no external cron needed.
 //
-// Every minute: start scheduled sends that are due and restart sends
-// whose worker died. Every 15 minutes: sync
+// Every minute: start scheduled sends that are due, pick A/B test
+// winners whose waiting time is over, and restart sends whose worker died. Every 15 minutes: sync
 // bounces and spam complaints from Oracle. Set BULK_EMAIL_SCHEDULER=off
 // to disable (e.g. on a second process sharing the same database).
 
 import { connectToDatabase } from "../db/mongodb";
-import { resumeStaleJobs, startDueScheduledJobs } from "./process-job";
+import { decideDueAbTests, resumeStaleJobs, startDueScheduledJobs } from "./process-job";
 import { syncBounces } from "./bounces";
 
 const TICK_MS = 60_000;
@@ -23,6 +23,7 @@ declare global {
 async function tick(count: number) {
   await connectToDatabase();
   await startDueScheduledJobs();
+  await decideDueAbTests();
   await resumeStaleJobs();
   if (count % BOUNCE_SYNC_EVERY_TICKS === 0) {
     const result = await syncBounces();
@@ -33,7 +34,9 @@ async function tick(count: number) {
 }
 
 export function startScheduler(): void {
-  if (process.env.BULK_EMAIL_SCHEDULER === "off" || global.__bulkEmailScheduler) return;
+  const setting = process.env.BULK_EMAIL_SCHEDULER;
+  const enabled = setting === "on" || (setting !== "off" && process.env.NODE_ENV === "production");
+  if (!enabled || global.__bulkEmailScheduler) return;
   let count = 0;
   let busy = false;
   global.__bulkEmailScheduler = setInterval(async () => {
