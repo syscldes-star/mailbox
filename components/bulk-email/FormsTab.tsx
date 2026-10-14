@@ -274,7 +274,7 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
               `<form method="post" action="${url}">\n` +
               (f.askName ? `  <input name="name" type="text" placeholder="Name">\n` : "") +
               `  <input name="email" type="email" placeholder="Email" required>\n` +
-              `  <input name="website" type="text" style="display:none" tabindex="-1" autocomplete="off">\n` +
+              `  <input name="hp_x7" type="text" style="display:none" tabindex="-1" autocomplete="off">\n` +
               `  <button type="submit">${f.buttonText}</button>\n</form>`;
             return (
               <div key={f.id} className={cardClass}>
@@ -342,7 +342,7 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
                         <CopyButton text={htmlForm} label="Copy" />
                       </div>
                       <pre className="overflow-x-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-700">{htmlForm}</pre>
-                      <p className="mt-1 text-xs text-slate-400">Keep the hidden “website” field -- it catches spam bots.</p>
+                      <p className="mt-1 text-xs text-slate-400">Keep the hidden “hp_x7” field -- it catches spam bots.</p>
                     </div>
                   </div>
                 )}

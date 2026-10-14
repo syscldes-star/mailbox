@@ -22,6 +22,8 @@ import { publicBaseUrl } from "@/lib/bulk-email/access";
 
 type Params = { params: Promise<{ formId: string }> };
 
+const HONEYPOT = "hp_x7";
+
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET, POST, OPTIONS", "Access-Control-Allow-Headers": "Content-Type" };
 
 async function loadForm(formId: string) {
@@ -38,8 +40,10 @@ function formHtml(form: { heading: string; description?: string; buttonText: str
     `<form method="post" action="${escapeHtml(action)}">` +
     (form.askName ? `<label for="name">Name</label><input id="name" name="name" type="text" autocomplete="name" maxlength="200">` : "") +
     `<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required maxlength="254">` +
-    // Honeypot: hidden from people, filled in by most bots.
-    `<div class="hp" aria-hidden="true"><label for="website">Website</label><input id="website" name="website" type="text" tabindex="-1" autocomplete="off"></div>` +
+    // Honeypot: hidden from people, filled in by most bots. Deliberately
+    // not named or labelled like anything a browser autofills (it used to
+    // be "website", which Chrome filled in for real people).
+    `<div class="hp" aria-hidden="true"><label for="${HONEYPOT}">Leave this empty</label><input id="${HONEYPOT}" name="${HONEYPOT}" type="text" tabindex="-1" autocomplete="off" data-lpignore="true" data-1p-ignore></div>` +
     `<button type="submit">${escapeHtml(form.buttonText || "Subscribe")}</button>` +
     `</form><p class="small">We'll email you a link to confirm. You can unsubscribe at any time.</p>`
   );
@@ -75,12 +79,13 @@ export async function POST(req: NextRequest, { params }: Params) {
       const body = await req.json();
       email = String(body.email ?? "");
       name = String(body.name ?? "");
-      honeypot = String(body.website ?? "");
+      honeypot = String(body[HONEYPOT] ?? body.website ?? "");
     } else {
       const body = await req.formData();
       email = String(body.get("email") ?? "");
       name = String(body.get("name") ?? "");
-      honeypot = String(body.get("website") ?? "");
+      // "website" is the honeypot name in older embed snippets.
+      honeypot = String(body.get(HONEYPOT) ?? body.get("website") ?? "");
     }
   } catch {
     return reply(false, "Something went wrong reading the form -- please try again.", 400);
@@ -95,7 +100,11 @@ export async function POST(req: NextRequest, { params }: Params) {
     return publicPage(form.heading, formHtml(form, req.nextUrl.pathname, "Please enter a valid email address."), 400);
   }
   // Bots: pretend it worked, do nothing.
-  if (honeypot) return reply(true, confirmMessage);
+  // Logged so a real person caught by it shows up in the server log.
+  if (honeypot) {
+    console.warn(`[signup] no confirmation sent to ${email} (form ${formId}): hidden spam-trap field was filled in`);
+    return reply(true, confirmMessage);
+  }
 
   const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
   if (!allow(`ip:${ip}`, 20, 60 * 60 * 1000) || !allow(`form:${formId}`, 500, 60 * 60 * 1000)) {
@@ -103,15 +112,25 @@ export async function POST(req: NextRequest, { params }: Params) {
   }
   // Silently cap confirmation emails per address (stops using the form
   // to flood someone's inbox).
-  if (!allow(`email:${email}`, 3, 24 * 60 * 60 * 1000)) return reply(true, confirmMessage);
+  if (!allow(`email:${email}`, 3, 24 * 60 * 60 * 1000)) {
+    console.warn(`[signup] no confirmation sent to ${email} (form ${formId}): already sent 3 in the last 24 hours`);
+    return reply(true, confirmMessage);
+  }
 
   // Addresses that bounced or reported spam never get a confirmation.
   const blocked = await EmailSuppression.exists({ workspaceId: form.workspaceId, email, reason: { $in: ["bounced", "complained"] } });
-  if (!blocked) {
+  if (blocked) {
+    console.warn(`[signup] no confirmation sent to ${email} (form ${formId}): address previously bounced or reported spam`);
+  } else {
     const confirmUrl = `${publicBaseUrl(req).replace(/\/+$/, "")}/api/subscribe/confirm?t=${encodeURIComponent(signConfirmToken(formId, email, name))}`;
     const { postalAddress } = await getEmailSettings(form.workspaceId);
     try {
-      await sendConfirmationEmail(form, email, confirmUrl, postalAddress);
+      const result = await sendConfirmationEmail(form, email, confirmUrl, postalAddress);
+      console.log(
+        result.suppressed
+          ? `[signup] confirmation to ${email} (form ${formId}) dropped by Oracle: address is on its suppression list`
+          : `[signup] confirmation sent to ${email} (form ${formId}), message id ${result.messageId}`
+      );
     } catch (err) {
       console.error("[signup] confirmation email failed", err);
       return reply(false, "We couldn't send the confirmation email right now -- please try again later.", 502);
