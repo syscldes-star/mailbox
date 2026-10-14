@@ -47,7 +47,7 @@ interface JobSummary {
   fromLocalPart: string;
   fromName?: string;
   subject: string;
-  status: "scheduled" | "sending" | "testing" | "completed" | "cancelled" | "failed";
+  status: "scheduled" | "sending" | "completed" | "cancelled" | "failed";
   scheduledAt?: string;
   error?: string;
   createdAt: string;
@@ -81,30 +81,8 @@ interface JobRecipient {
   deliveryIssueAt?: string;
 }
 
-interface VariantStats {
-  sent: number;
-  opened: number;
-  clicked: number;
-  openRate: number;
-  clickRate: number;
-}
-
-interface AbTestInfo {
-  subjectB: string;
-  testPercent: number;
-  waitHours: number;
-  metric: "opens" | "clicks";
-  decideAt: string;
-  winner?: "A" | "B";
-  decidedAt?: string;
-  decidedBy?: "auto" | "manual";
-  statsA: VariantStats;
-  statsB: VariantStats;
-}
-
 interface JobDetail extends Omit<JobSummary, "total" | "sent" | "failed" | "skipped" | "opened" | "clicked" | "bounced" | "complained"> {
   recipients: JobRecipient[];
-  abTest?: AbTestInfo;
 }
 
 interface ListResponse {
@@ -125,8 +103,6 @@ const TAB_LABEL: Record<Tab, string> = {
   unsubscribes: "Unsubscribes",
   settings: "Settings",
 };
-
-type JobAction = "cancel" | "resume" | "retry_failed" | "ab_decide";
 
 type SendAgainAudience = "all" | "not_opened" | "not_clicked";
 
@@ -172,7 +148,6 @@ const labelClass = "mb-1 block text-xs font-medium text-slate-500";
 
 const STATUS_BADGE: Record<JobSummary["status"], string> = {
   scheduled: "bg-amber-50 text-amber-800",
-  testing: "bg-violet-50 text-violet-700",
   sending: "bg-indigo-50 text-indigo-700",
   completed: "bg-emerald-50 text-emerald-700",
   cancelled: "bg-slate-100 text-slate-600",
@@ -231,11 +206,6 @@ export default function BulkEmailPage() {
   const [templates, setTemplates] = useState<SavedTemplate[]>([]);
   const [draftRestored, setDraftRestored] = useState(false);
   const [showListPicker, setShowListPicker] = useState(false);
-  const [abEnabled, setAbEnabled] = useState(false);
-  const [subjectB, setSubjectB] = useState("");
-  const [abPercent, setAbPercent] = useState(20);
-  const [abWaitHours, setAbWaitHours] = useState(4);
-  const [abMetric, setAbMetric] = useState<"opens" | "clicks">("opens");
   const [savingListName, setSavingListName] = useState<string | null>(null);
   const [bodyHtml, setBodyHtml] = useState(DEFAULT_BODY);
   const [recipientsText, setRecipientsText] = useState("");
@@ -352,8 +322,6 @@ export default function BulkEmailPage() {
     setRecipientsText("");
     setScheduleMode("now");
     setScheduledLocal("");
-    setAbEnabled(false);
-    setSubjectB("");
     setDraftRestored(false);
     try {
       localStorage.removeItem(DRAFT_STORAGE_KEY);
@@ -433,7 +401,7 @@ export default function BulkEmailPage() {
   const anySending = data?.jobs.some((j) => j.status === "sending") ?? false;
   // Opens keep arriving after a send finishes, so an expanded send keeps
   // refreshing too -- just less often.
-  const anyScheduled = data?.jobs.some((j) => j.status === "scheduled" || j.status === "testing") ?? false;
+  const anyScheduled = data?.jobs.some((j) => j.status === "scheduled") ?? false;
   useEffect(() => {
     if (!anySending && !expandedId && !anyScheduled) return;
     const interval = setInterval(
@@ -480,7 +448,6 @@ export default function BulkEmailPage() {
   const noSenders = data !== null && data.senders.length === 0;
   const visualSafe = isVisualSafe(bodyHtml);
   const missingAddress = data !== null && !data.settings.postalAddress;
-  const abTestSize = Math.floor((parsed.recipients.length * abPercent) / 100 / 2) * 2;
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -523,7 +490,6 @@ export default function BulkEmailPage() {
         trackOpens,
         trackClicks,
         scheduledAt: scheduleMode === "later" && scheduledLocal ? new Date(scheduledLocal).toISOString() : undefined,
-        abTest: abEnabled ? { subjectB, testPercent: abPercent, waitHours: abWaitHours, metric: abMetric } : undefined,
         recipients: parsed.recipients,
       });
       setConfirming(false);
@@ -540,11 +506,11 @@ export default function BulkEmailPage() {
     }
   }
 
-  async function jobAction(id: string, action: JobAction, variant?: "A" | "B") {
+  async function jobAction(id: string, action: "cancel" | "resume" | "retry_failed") {
     setActionPending(id + action);
     setHistoryError(null);
     try {
-      await apiPatch(`/api/email/bulk/${id}`, { action, variant });
+      await apiPatch(`/api/email/bulk/${id}`, { action });
       await refresh();
       await refreshDetail(id);
     } catch (err) {
@@ -573,7 +539,6 @@ export default function BulkEmailPage() {
     !!bodyHtml.trim() &&
     parsed.recipients.length > 0 &&
     (scheduleMode === "now" || !!scheduledLocal) &&
-    (!abEnabled || (!!subjectB.trim() && abTestSize >= 20)) &&
     !tooMany &&
     !missingAddress;
 
@@ -930,71 +895,6 @@ export default function BulkEmailPage() {
                 Track clicks
                 <span className="text-xs text-slate-400">(links go through your domain first, then on to the real page)</span>
               </label>
-
-              <div className="rounded-lg border border-slate-200 p-3">
-                <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={abEnabled}
-                    onChange={(e) => setAbEnabled(e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-300 accent-indigo-600"
-                  />
-                  A/B test the subject line
-                </label>
-                {abEnabled && (
-                  <div className="mt-3 space-y-3">
-                    <div>
-                      <label className={labelClass}>Subject B</label>
-                      <input
-                        value={subjectB}
-                        onChange={(e) => setSubjectB(e.target.value)}
-                        placeholder="An alternative subject to test against the one above"
-                        className={inputClass}
-                      />
-                    </div>
-                    <div className="flex flex-wrap items-end gap-4 text-sm text-slate-700">
-                      <div>
-                        <label className={labelClass}>Test group</label>
-                        <select value={abPercent} onChange={(e) => setAbPercent(Number(e.target.value))} className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm">
-                          {[10, 20, 30, 40, 50].map((p) => (
-                            <option key={p} value={p}>
-                              {p}% of recipients
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className={labelClass}>Pick the winner after</label>
-                        <select value={abWaitHours} onChange={(e) => setAbWaitHours(Number(e.target.value))} className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm">
-                          {[1, 2, 4, 8, 12, 24, 48].map((h) => (
-                            <option key={h} value={h}>
-                              {h} hour{h === 1 ? "" : "s"}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className={labelClass}>Winner by</label>
-                        <select value={abMetric} onChange={(e) => setAbMetric(e.target.value as "opens" | "clicks")} className="rounded-lg border border-slate-200 px-2 py-1.5 text-sm">
-                          <option value="opens">Open rate</option>
-                          <option value="clicks">Click rate</option>
-                        </select>
-                      </div>
-                    </div>
-                    <p className={`text-xs ${abTestSize < 20 && parsed.recipients.length > 0 ? "text-red-600" : "text-slate-500"}`}>
-                      {parsed.recipients.length === 0
-                        ? "Add recipients to see the split."
-                        : abTestSize < 20
-                          ? `Too few recipients: an A/B test needs at least 10 per subject (currently ${abTestSize / 2}). Add recipients or raise the test group.`
-                          : `${(abTestSize / 2).toLocaleString()} get subject A and ${(abTestSize / 2).toLocaleString()} get subject B now. ` +
-                            `After ${abWaitHours} hour${abWaitHours === 1 ? "" : "s"}, the remaining ${(parsed.recipients.length - abTestSize).toLocaleString()} get the subject with the higher ${abMetric === "opens" ? "open" : "click"} rate.`}
-                    </p>
-                    {((abMetric === "opens" && !trackOpens) || (abMetric === "clicks" && !trackClicks)) && (
-                      <p className="text-xs text-red-600">Turn on {abMetric === "opens" ? "open" : "click"} tracking above to pick a winner by {abMetric}.</p>
-                    )}
-                  </div>
-                )}
-              </div>
               <p className="text-xs text-slate-400">
                 An unsubscribe link is added automatically unless you place {"{{unsubscribe_url}}"} yourself.
                 Unsubscribed addresses are skipped on future sends.
@@ -1215,7 +1115,7 @@ export default function BulkEmailPage() {
                           <td className="px-3 py-3">
                             <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_BADGE[job.status]}`}>
                               {job.status === "sending" && <Loader2 size={11} className="mr-1 inline animate-spin" />}
-                              {job.status === "testing" ? "A/B testing" : job.status}
+                              {job.status}
                             </span>
                             {job.status === "scheduled" && job.scheduledAt && (
                               <p className="mt-1 whitespace-nowrap text-xs text-amber-700">{formatDate(job.scheduledAt)}</p>
@@ -1233,7 +1133,7 @@ export default function BulkEmailPage() {
                                 filter={recipientFilter}
                                 onFilter={setRecipientFilter}
                                 actionPending={actionPending}
-                                onAction={(action, variant) => jobAction(job.id, action, variant)}
+                                onAction={(action) => jobAction(job.id, action)}
                                 onSendAgain={(audience) => sendAgain(job.id, audience)}
                                 onRefresh={() => {
                                   refresh();
@@ -1279,7 +1179,7 @@ function JobDetailPanel({
   filter: RecipientFilter;
   onFilter: (f: RecipientFilter) => void;
   actionPending: string | null;
-  onAction: (action: JobAction, variant?: "A" | "B") => void;
+  onAction: (action: "cancel" | "resume" | "retry_failed") => void;
   onRefresh: () => void;
   onSendAgain: (audience: SendAgainAudience) => void;
 }) {
@@ -1319,7 +1219,7 @@ function JobDetailPanel({
         )}
         {job.error && <span className="text-xs text-red-600">Error: {job.error}</span>}
         <div className="ml-auto flex gap-2">
-          {canManage && (job.status === "sending" || job.status === "scheduled" || job.status === "testing") && (
+          {canManage && (job.status === "sending" || job.status === "scheduled") && (
             <button
               onClick={() => onAction("cancel")}
               disabled={busy("cancel")}
@@ -1328,7 +1228,7 @@ function JobDetailPanel({
               <Ban size={13} /> {job.status === "scheduled" ? "Cancel scheduled send" : "Cancel send"}
             </button>
           )}
-          {canManage && job.status !== "sending" && job.status !== "scheduled" && job.status !== "testing" && pending > 0 && (
+          {canManage && job.status !== "sending" && job.status !== "scheduled" && pending > 0 && (
             <button
               onClick={() => onAction("resume")}
               disabled={busy("resume")}
@@ -1337,7 +1237,7 @@ function JobDetailPanel({
               <Send size={13} /> Resume ({pending} left)
             </button>
           )}
-          {canManage && job.status !== "sending" && job.status !== "scheduled" && job.status !== "testing" && job.failed > 0 && (
+          {canManage && job.status !== "sending" && job.status !== "scheduled" && job.failed > 0 && (
             <button
               onClick={() => onAction("retry_failed")}
               disabled={busy("retry_failed")}
@@ -1384,8 +1284,6 @@ function JobDetailPanel({
           </button>
         ))}
       </div>
-
-      {detail.abTest && <AbTestPanel ab={detail.abTest} status={job.status} subjectA={job.subject} canManage={canManage} busy={busy("ab_decide")} onPick={(v) => onAction("ab_decide", v)} />}
 
       {topLinks.length > 0 && (
         <div className="rounded-lg border border-slate-200 bg-white">
@@ -1451,81 +1349,6 @@ function JobDetailPanel({
       {matching.length > shown.length && (
         <p className="text-xs text-slate-400">Showing the first 200 — export CSV for the full list.</p>
       )}
-    </div>
-  );
-}
-
-function AbTestPanel({
-  ab,
-  status,
-  subjectA,
-  canManage,
-  busy,
-  onPick,
-}: {
-  ab: AbTestInfo;
-  status: JobSummary["status"];
-  subjectA: string;
-  canManage: boolean;
-  busy: boolean;
-  onPick: (variant?: "A" | "B") => void;
-}) {
-  const rateKey = ab.metric === "clicks" ? "clickRate" : "openRate";
-  const leader = ab.statsB[rateKey] > ab.statsA[rateKey] ? "B" : "A";
-  const rows = [
-    { variant: "A" as const, subject: subjectA, stats: ab.statsA },
-    { variant: "B" as const, subject: ab.subjectB, stats: ab.statsB },
-  ];
-  return (
-    <div className="rounded-lg border border-violet-200 bg-violet-50/40 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-xs font-semibold text-violet-800">
-          A/B test · {ab.testPercent}% test group · winner by {ab.metric === "clicks" ? "click" : "open"} rate
-        </p>
-        <p className="text-xs text-slate-600">
-          {ab.winner
-            ? `Subject ${ab.winner} won${ab.decidedBy === "manual" ? " (picked by hand)" : ""} ${formatDate(ab.decidedAt)}`
-            : status === "testing"
-              ? `Winner picked automatically ${formatDate(ab.decideAt)}`
-              : status === "sending" || status === "scheduled"
-                ? "Test group still sending"
-                : "Not decided"}
-        </p>
-      </div>
-      <table className="mt-2 w-full text-xs">
-        <thead className="text-left text-slate-500">
-          <tr>
-            <th className="py-1 pr-2 font-medium">Subject</th>
-            <th className="py-1 pr-2 text-right font-medium">Sent</th>
-            <th className="py-1 pr-2 text-right font-medium">Opened</th>
-            <th className="py-1 pr-2 text-right font-medium">Clicked</th>
-            <th className="py-1" />
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(({ variant, subject, stats }) => (
-            <tr key={variant} className="border-t border-violet-100">
-              <td className="max-w-[280px] truncate py-1.5 pr-2 text-slate-800">
-                <span className="mr-1.5 rounded bg-white px-1.5 py-0.5 font-semibold text-violet-700">{variant}</span>
-                {subject}
-                {(ab.winner ?? (status === "testing" ? leader : null)) === variant && (
-                  <span className="ml-2 font-medium text-violet-700">{ab.winner ? "Winner" : "Leading"}</span>
-                )}
-              </td>
-              <td className="py-1.5 pr-2 text-right tabular-nums">{stats.sent}</td>
-              <td className="py-1.5 pr-2 text-right tabular-nums">{(stats.openRate * 100).toFixed(1)}%</td>
-              <td className="py-1.5 pr-2 text-right tabular-nums">{(stats.clickRate * 100).toFixed(1)}%</td>
-              <td className="py-1.5 text-right">
-                {canManage && !ab.winner && status === "testing" && (
-                  <button onClick={() => onPick(variant)} disabled={busy} className="rounded border border-violet-200 bg-white px-2 py-0.5 font-medium text-violet-700 hover:bg-violet-50 disabled:opacity-50">
-                    Send {variant} to the rest now
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }

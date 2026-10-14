@@ -65,7 +65,6 @@ export async function GET() {
           },
           trackOpens: 1,
           trackClicks: 1,
-          abTest: 1,
         },
       },
     ]),
@@ -90,7 +89,6 @@ interface CreateBody {
   trackClicks?: boolean;
   preheader?: string;
   scheduledAt?: string;
-  abTest?: { subjectB?: string; testPercent?: number; waitHours?: number; metric?: string };
   recipients?: { email?: string; name?: string; vars?: Record<string, unknown> }[];
 }
 
@@ -155,33 +153,6 @@ export async function POST(req: NextRequest) {
     return apiError(`A single send is limited to ${MAX_RECIPIENTS_PER_JOB} recipients.`, 400);
   }
 
-  // A/B test: shuffle, then split the test group evenly between A and B.
-  let abTest: { subjectB: string; testPercent: number; waitHours: number; metric: "opens" | "clicks"; decideAt: Date } | undefined;
-  if (body.abTest) {
-    const subjectB = body.abTest.subjectB?.trim();
-    const testPercent = Math.round(Number(body.abTest.testPercent));
-    const waitHours = Number(body.abTest.waitHours);
-    const metric = body.abTest.metric === "clicks" ? "clicks" : "opens";
-    if (!subjectB) return apiError("Enter subject B for the A/B test.", 400);
-    if (subjectB === subject) return apiError("Subject B must be different from subject A.", 400);
-    if (!(testPercent >= 10 && testPercent <= 50)) return apiError("A/B test group must be 10–50% of recipients.", 400);
-    if (!(waitHours >= 1 && waitHours <= 72)) return apiError("A/B test wait must be 1–72 hours.", 400);
-    if (metric === "opens" && body.trackOpens === false) return apiError("Turn on open tracking to pick the winner by opens.", 400);
-    if (metric === "clicks" && body.trackClicks === false) return apiError("Turn on click tracking to pick the winner by clicks.", 400);
-    const testSize = Math.floor((recipients.length * testPercent) / 100 / 2) * 2;
-    if (testSize < 20) return apiError("An A/B test needs at least 10 recipients per subject -- add more recipients or raise the test size.", 400);
-
-    for (let i = recipients.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [recipients[i], recipients[j]] = [recipients[j], recipients[i]];
-    }
-    recipients.forEach((r, i) => {
-      (r as { variant?: string }).variant = i < testSize / 2 ? "A" : i < testSize ? "B" : "rest";
-    });
-    const start = scheduledAt?.getTime() ?? Date.now();
-    abTest = { subjectB: subjectB.slice(0, 500), testPercent, waitHours, metric, decideAt: new Date(start + waitHours * 60 * 60 * 1000) };
-  }
-
   const settings = await getEmailSettings(auth.workspaceId);
   if (!settings.postalAddress) {
     return apiError(
@@ -206,7 +177,6 @@ export async function POST(req: NextRequest) {
     recipients,
     status: scheduledAt ? "scheduled" : "sending",
     scheduledAt,
-    abTest,
   });
 
   if (!scheduledAt) startBulkJob(String(job._id));

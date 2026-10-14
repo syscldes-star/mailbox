@@ -10,22 +10,7 @@
 import { Schema, type Document, type Model } from "mongoose";
 import { emailDb } from "../db/mongodb";
 
-/** "testing": an A/B test's test group has been sent and the job is
- * waiting for its decision time before sending the winner to the rest. */
-export type BulkJobStatus = "scheduled" | "sending" | "testing" | "completed" | "cancelled" | "failed";
-
-export interface IAbTest {
-  subjectB: string;
-  /** Share of recipients in the test group, split evenly between A and B. */
-  testPercent: number;
-  waitHours: number;
-  metric: "opens" | "clicks";
-  decideAt: Date;
-  winner?: "A" | "B";
-  decidedAt?: Date;
-  /** "auto" when the scheduler picked it, "manual" when someone did. */
-  decidedBy?: "auto" | "manual";
-}
+export type BulkJobStatus = "scheduled" | "sending" | "completed" | "cancelled" | "failed";
 export type RecipientStatus = "pending" | "sent" | "failed" | "skipped";
 
 export interface IBulkRecipient {
@@ -50,9 +35,6 @@ export interface IBulkRecipient {
    * after the email was accepted. */
   deliveryIssue?: "bounced" | "soft_bounced" | "complained";
   deliveryIssueAt?: Date;
-  /** A/B test group: "A"/"B" get the respective subject, "rest" waits
-   * for the winner. Absent on sends without an A/B test. */
-  variant?: "A" | "B" | "rest";
 }
 
 export interface IBulkEmailJob extends Document {
@@ -77,7 +59,6 @@ export interface IBulkEmailJob extends Document {
   postalAddress?: string;
   recipients: IBulkRecipient[];
   status: BulkJobStatus;
-  abTest?: IAbTest;
   /** When a "scheduled" job should start sending. */
   scheduledAt?: Date;
   /** Last time a worker touched this job. A "sending" job whose
@@ -108,7 +89,6 @@ const RecipientSchema = new Schema<IBulkRecipient>(
     clickedLinks: { type: [String], default: undefined },
     deliveryIssue: { type: String, enum: ["bounced", "soft_bounced", "complained"] },
     deliveryIssueAt: Date,
-    variant: { type: String, enum: ["A", "B", "rest"] },
   },
   { _id: false }
 );
@@ -131,27 +111,11 @@ const BulkEmailJobSchema = new Schema<IBulkEmailJob>(
     recipients: { type: [RecipientSchema], default: [] },
     status: {
       type: String,
-      enum: ["scheduled", "sending", "testing", "completed", "cancelled", "failed"],
+      enum: ["scheduled", "sending", "completed", "cancelled", "failed"],
       default: "sending",
       index: true,
     },
     scheduledAt: Date,
-    abTest: {
-      type: new Schema<IAbTest>(
-        {
-          subjectB: { type: String, required: true },
-          testPercent: { type: Number, required: true },
-          waitHours: { type: Number, required: true },
-          metric: { type: String, enum: ["opens", "clicks"], required: true },
-          decideAt: { type: Date, required: true },
-          winner: { type: String, enum: ["A", "B"] },
-          decidedAt: Date,
-          decidedBy: { type: String, enum: ["auto", "manual"] },
-        },
-        { _id: false }
-      ),
-      default: undefined,
-    },
     heartbeatAt: Date,
     completedAt: Date,
     error: String,

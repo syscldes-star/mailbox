@@ -4,16 +4,16 @@
 // instrumentation.ts. The app runs as a single long-lived pm2 process,
 // so a plain interval is enough -- no external cron needed.
 //
-// Every minute: start scheduled sends that are due, pick A/B test
-// winners whose waiting time is over, and restart sends whose worker
-// died. Every 15 minutes: sync bounces and spam complaints from Oracle.
+// Every minute: start scheduled sends that are due and restart sends
+// whose worker died. Every 15 minutes: sync bounces and spam complaints
+// from Oracle.
 //
 // Runs only in production by default: a local `next dev` usually points
 // at the same database, and shouldn't start real sends from a laptop.
 // BULK_EMAIL_SCHEDULER=on forces it on, =off forces it off.
 
 import { connectToDatabase } from "../db/mongodb";
-import { decideDueAbTests, resumeStaleJobs, startDueScheduledJobs } from "./process-job";
+import { resumeStaleJobs, startDueScheduledJobs } from "./process-job";
 import { syncBounces } from "./bounces";
 
 const TICK_MS = 60_000;
@@ -26,7 +26,6 @@ declare global {
 async function tick(count: number) {
   await connectToDatabase();
   await startDueScheduledJobs();
-  await decideDueAbTests();
   await resumeStaleJobs();
   if (count % BOUNCE_SYNC_EVERY_TICKS === 0) {
     const result = await syncBounces();
