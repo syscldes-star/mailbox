@@ -33,11 +33,14 @@ import {
   Pencil,
   Monitor,
   Smartphone,
+  Link2,
+  Info,
 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, ApiError } from "@/lib/api/client";
 import { parseRecipients, recipientsToCsv, MAX_RECIPIENTS_PER_JOB, type ParseResult } from "@/lib/bulk-email/recipients";
 import { extractTags, renderTemplate, withFooter } from "@/lib/bulk-email/template";
 import { campaignSlug } from "@/lib/bulk-email/tracking";
+import { extractLinks, runPresendChecks } from "@/lib/bulk-email/presend-check";
 import SettingsTab from "@/components/bulk-email/SettingsTab";
 import UnsubscribesTab from "@/components/bulk-email/UnsubscribesTab";
 import TemplatesTab, { type SavedTemplate } from "@/components/bulk-email/TemplatesTab";
@@ -232,6 +235,10 @@ export default function BulkEmailPanel() {
   const [utmSource, setUtmSource] = useState("email");
   const [utmMedium, setUtmMedium] = useState("email");
   const [utmCampaign, setUtmCampaign] = useState("");
+  const [linkResults, setLinkResults] = useState<{ url: string; ok: boolean; status?: number; error?: string }[] | null>(null);
+  const [checkingLinks, setCheckingLinks] = useState(false);
+  // Link results describe a specific body -- clear them when it changes.
+  useEffect(() => setLinkResults(null), [bodyHtml]);
   const [previewDevice, setPreviewDevice] = useState<"desktop" | "mobile">("desktop");
   const [bodyView, setBodyView] = useState<"visual" | "html" | "preview">("visual");
   const visualEditorEl = useRef<HTMLDivElement | null>(null);
@@ -478,6 +485,35 @@ export default function BulkEmailPanel() {
   const canSend = data?.canSend ?? false;
   const noSenders = data !== null && data.senders.length === 0;
   const visualSafe = isVisualSafe(bodyHtml);
+  const findings = useMemo(
+    () =>
+      runPresendChecks({
+        subject,
+        preheader,
+        bodyHtml,
+        renderedHtml: previewHtml,
+        unknownTags,
+        recipientCount: parsed.recipients.length,
+      }),
+    [subject, preheader, bodyHtml, previewHtml, unknownTags, parsed.recipients.length]
+  );
+  const brokenLinks = linkResults?.filter((r) => !r.ok) ?? [];
+
+  async function checkDraftLinks() {
+    setCheckingLinks(true);
+    try {
+      const urls = extractLinks(bodyHtml).filter((u) => /^https?:\/\//i.test(u) && !u.includes("{{"));
+      const res = await apiPost<{ results: { url: string; ok: boolean; status?: number; error?: string }[] }>(
+        "/api/email/bulk/check-links",
+        { urls: urls.slice(0, 40) }
+      );
+      setLinkResults(res.results);
+    } catch (err) {
+      setComposeError(err instanceof ApiError ? err.message : "Couldn't check links.");
+    } finally {
+      setCheckingLinks(false);
+    }
+  }
   const missingAddress = data !== null && !data.settings.postalAddress;
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -994,6 +1030,62 @@ export default function BulkEmailPanel() {
             </div>
           </div>
 
+          {/* Pre-send checklist */}
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-sm font-semibold text-slate-900">
+                Pre-send check
+                {findings.length === 0 && brokenLinks.length === 0 && (
+                  <span className="ml-2 inline-flex items-center gap-1 text-xs font-medium text-emerald-700">
+                    <CheckCircle2 size={13} /> Looks good
+                  </span>
+                )}
+              </h2>
+              <button
+                type="button"
+                onClick={checkDraftLinks}
+                disabled={checkingLinks || !canSend || extractLinks(bodyHtml).length === 0}
+                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {checkingLinks ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
+                {linkResults ? "Re-check links" : "Check links"}
+              </button>
+            </div>
+            {(findings.length > 0 || linkResults) && (
+              <ul className="mt-3 space-y-1.5 text-sm">
+                {findings.map((f, i) => (
+                  <li key={i} className="flex items-start gap-2">
+                    {f.level === "error" ? (
+                      <XCircle size={15} className="mt-0.5 shrink-0 text-red-500" aria-label="Problem" />
+                    ) : f.level === "warning" ? (
+                      <AlertTriangle size={15} className="mt-0.5 shrink-0 text-amber-500" aria-label="Warning" />
+                    ) : (
+                      <Info size={15} className="mt-0.5 shrink-0 text-slate-400" aria-label="Tip" />
+                    )}
+                    <span className={f.level === "tip" ? "text-slate-500" : "text-slate-700"}>{f.message}</span>
+                  </li>
+                ))}
+                {linkResults &&
+                  (brokenLinks.length === 0 ? (
+                    <li className="flex items-start gap-2 text-slate-700">
+                      <CheckCircle2 size={15} className="mt-0.5 shrink-0 text-emerald-500" />
+                      All {linkResults.length} link{linkResults.length === 1 ? "" : "s"} work.
+                    </li>
+                  ) : (
+                    brokenLinks.map((r) => (
+                      <li key={r.url} className="flex items-start gap-2">
+                        <XCircle size={15} className="mt-0.5 shrink-0 text-red-500" aria-label="Broken link" />
+                        <span className="min-w-0 text-slate-700">
+                          Broken link{r.status ? ` (${r.status})` : r.error ? ` (${r.error})` : ""}:{" "}
+                          <span className="break-all text-slate-500">{r.url}</span>
+                        </span>
+                      </li>
+                    ))
+                  ))}
+              </ul>
+            )}
+          </div>
+
           {/* Save as template + schedule */}
           <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             {savingTemplateName === null ? (
@@ -1081,6 +1173,9 @@ export default function BulkEmailPanel() {
             {confirming ? (
               <div className="flex items-center gap-2">
                 <span className="text-sm text-slate-700">
+                  {findings.some((f) => f.level === "error") || brokenLinks.length > 0 ? (
+                    <span className="mr-1 font-medium text-red-600">The pre-send check found problems.</span>
+                  ) : null}
                   {scheduleMode === "later" && scheduledLocal
                     ? `Schedule for ${new Date(scheduledLocal).toLocaleString()} to ${parsed.recipients.length.toLocaleString()} recipients?`
                     : `Send to ${parsed.recipients.length.toLocaleString()} recipients?`}
