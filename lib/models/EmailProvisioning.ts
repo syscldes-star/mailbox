@@ -8,13 +8,20 @@
 import mongoose, { Schema, type Document, type Model } from "mongoose";
 import type { ProvisioningStep, StepStatus } from "../email-provisioning/types";
 
-export interface IEmailProvisioning extends Omit<Document, "errors"> {
+export interface IEmailProvisioning extends Document {
   domain: string;
   workspaceId: string;
   defaultMailboxLocalPart: string;
   defaultMailboxPassword: string;
+  defaultMailboxPasswordRevealed: boolean;
   steps: Record<ProvisioningStep, StepStatus>;
-  errors: Partial<Record<ProvisioningStep, string>>;
+  // Named stepErrors, not errors -- Mongoose's own Document type already
+  // reserves "errors" for its internal validation system, and reusing
+  // that name causes a real TypeScript conflict that only surfaces
+  // under `next build`'s full type-check (next dev doesn't catch it).
+  // Records saved before the rename still hold theirs under "errors";
+  // state-store.ts reads that as a fallback.
+  stepErrors: Partial<Record<ProvisioningStep, string>>;
   oracleEmailDomainId?: string;
   oracleDkimId?: string;
   oracleDkimCnameName?: string;
@@ -33,8 +40,9 @@ const EmailProvisioningSchema = new Schema<IEmailProvisioning>(
     // re-prompting the customer -- rotate/expire this once the mailbox
     // exists and the customer has set their own password via SOGo.
     defaultMailboxPassword: { type: String, required: true, select: false },
+    defaultMailboxPasswordRevealed: { type: Boolean, default: false },
     steps: { type: Schema.Types.Mixed, required: true },
-    errors: { type: Schema.Types.Mixed, default: {} },
+    stepErrors: { type: Schema.Types.Mixed, default: {} },
     oracleEmailDomainId: String,
     oracleDkimId: String,
     oracleDkimCnameName: String,

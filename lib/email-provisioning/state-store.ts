@@ -16,7 +16,9 @@ function toState(doc: any): ProvisioningState {
     defaultMailboxPassword: doc.defaultMailboxPassword ?? "",
     defaultMailboxPasswordRevealed: doc.defaultMailboxPasswordRevealed ?? false,
     steps: doc.steps,
-    errors: doc.errors ?? {},
+    // doc.errors is Mongoose's own validation-error property, so records
+    // from before the stepErrors rename are read via doc.get("errors").
+    errors: doc.stepErrors ?? doc.get?.("errors") ?? {},
     oracleEmailDomainId: doc.oracleEmailDomainId,
     oracleDkimId: doc.oracleDkimId,
     oracleDkimCnameName: doc.oracleDkimCnameName,
@@ -43,7 +45,7 @@ export async function saveState(state: ProvisioningState): Promise<void> {
       defaultMailboxPassword: state.defaultMailboxPassword,
       defaultMailboxPasswordRevealed: state.defaultMailboxPasswordRevealed,
       steps: state.steps,
-      errors: state.errors,
+      stepErrors: state.errors,
       oracleEmailDomainId: state.oracleEmailDomainId,
       oracleDkimId: state.oracleDkimId,
       oracleDkimCnameName: state.oracleDkimCnameName,
