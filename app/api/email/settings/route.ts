@@ -7,7 +7,7 @@ import { NextRequest } from "next/server";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { EmailSettings } from "@/lib/models/EmailSettings";
-import { getEmailSettings, MAX_DAILY_LIMIT } from "@/lib/bulk-email/settings";
+import { getEmailSettings } from "@/lib/bulk-email/settings";
 
 export async function GET() {
   const auth = await requireAuth();
@@ -25,20 +25,13 @@ export async function PUT(req: NextRequest) {
     return apiError("Only admins and owners can change Bulk Email settings.", 403);
   }
 
-  const { postalAddress, dailyLimit } = await req.json();
+  const { postalAddress } = await req.json();
   const update: Record<string, unknown> = {};
 
   if (postalAddress !== undefined) {
     const address = String(postalAddress ?? "").trim();
     if (address.length > 500) return apiError("Postal address is too long (500 characters max).", 400);
     update.postalAddress = address;
-  }
-  if (dailyLimit !== undefined) {
-    const limit = Number(dailyLimit);
-    if (!Number.isInteger(limit) || limit < 1 || limit > MAX_DAILY_LIMIT) {
-      return apiError(`Daily limit must be a whole number between 1 and ${MAX_DAILY_LIMIT.toLocaleString()}.`, 400);
-    }
-    update.dailyLimit = limit;
   }
 
   await EmailSettings.updateOne(

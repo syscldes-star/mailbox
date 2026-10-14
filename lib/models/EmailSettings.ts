@@ -9,8 +9,6 @@ export interface IEmailSettings extends Document {
   workspaceId: string;
   /** Business postal address, added to every bulk email's footer. */
   postalAddress?: string;
-  /** Max recipients this workspace may queue per rolling 24 hours. */
-  dailyLimit?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -19,7 +17,6 @@ const EmailSettingsSchema = new Schema<IEmailSettings>(
   {
     workspaceId: { type: String, required: true, unique: true },
     postalAddress: { type: String, trim: true },
-    dailyLimit: Number,
   },
   { timestamps: true }
 );

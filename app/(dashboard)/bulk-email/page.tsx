@@ -111,8 +111,7 @@ interface ListResponse {
   senders: SenderDomain[];
   canSend: boolean;
   jobs: JobSummary[];
-  settings: { postalAddress: string; dailyLimit: number };
-  usage: { usedLast24h: number; dailyLimit: number };
+  settings: { postalAddress: string };
 }
 
 type Tab = "overview" | "compose" | "history" | "lists" | "templates" | "unsubscribes" | "settings";
@@ -481,8 +480,6 @@ export default function BulkEmailPage() {
   const noSenders = data !== null && data.senders.length === 0;
   const visualSafe = isVisualSafe(bodyHtml);
   const missingAddress = data !== null && !data.settings.postalAddress;
-  const remainingToday = data ? Math.max(0, data.usage.dailyLimit - data.usage.usedLast24h) : Infinity;
-  const overLimit = parsed.recipients.length > remainingToday;
   const abTestSize = Math.floor((parsed.recipients.length * abPercent) / 100 / 2) * 2;
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -578,7 +575,6 @@ export default function BulkEmailPage() {
     (scheduleMode === "now" || !!scheduledLocal) &&
     (!abEnabled || (!!subjectB.trim() && abTestSize >= 20)) &&
     !tooMany &&
-    !overLimit &&
     !missingAddress;
 
   return (
@@ -796,13 +792,6 @@ export default function BulkEmailPage() {
               {parsed.invalid.length > 0 && (
                 <span className="text-amber-700" title={parsed.invalid.slice(0, 20).join("\n")}>
                   {parsed.invalid.length} invalid line{parsed.invalid.length === 1 ? "" : "s"} ignored
-                </span>
-              )}
-              {data && (
-                <span className={overLimit ? "text-red-600" : "text-slate-500"}>
-                  {overLimit
-                    ? `Over your daily limit -- ${remainingToday.toLocaleString()} recipients left in the last 24 hours.`
-                    : `${remainingToday.toLocaleString()} of ${data.usage.dailyLimit.toLocaleString()} daily sends left`}
                 </span>
               )}
               {tooMany && (

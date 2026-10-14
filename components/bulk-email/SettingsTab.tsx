@@ -3,19 +3,16 @@
 import { useEffect, useState } from "react";
 import { Loader2, Save } from "lucide-react";
 import { apiGet, apiPut, ApiError } from "@/lib/api/client";
-import { cardClass, inputClass, labelClass, primaryButton } from "./ui";
+import { cardClass, inputClass, primaryButton } from "./ui";
 
 interface Settings {
   postalAddress: string;
-  dailyLimit: number;
-  maxDailyLimit: number;
   canEdit: boolean;
 }
 
 export default function SettingsTab({ onSaved }: { onSaved: () => void }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [postalAddress, setPostalAddress] = useState("");
-  const [dailyLimit, setDailyLimit] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -25,7 +22,6 @@ export default function SettingsTab({ onSaved }: { onSaved: () => void }) {
       .then((s) => {
         setSettings(s);
         setPostalAddress(s.postalAddress);
-        setDailyLimit(String(s.dailyLimit));
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load settings."));
   }, []);
@@ -36,7 +32,7 @@ export default function SettingsTab({ onSaved }: { onSaved: () => void }) {
     setError(null);
     setNotice(null);
     try {
-      const saved = await apiPut<Settings>("/api/email/settings", { postalAddress, dailyLimit: Number(dailyLimit) });
+      const saved = await apiPut<Settings>("/api/email/settings", { postalAddress });
       setSettings((s) => (s ? { ...s, ...saved } : s));
       setNotice("Settings saved.");
       onSaved();
@@ -75,26 +71,6 @@ export default function SettingsTab({ onSaved }: { onSaved: () => void }) {
           placeholder={"Acme Pvt Ltd\n12 MG Road, Bengaluru 560001\nIndia"}
           className={inputClass + " mt-3"}
         />
-      </div>
-
-      <div className={cardClass}>
-        <h2 className="text-sm font-semibold text-slate-900">Daily sending limit</h2>
-        <p className="mt-1 text-xs text-slate-500">
-          The most recipients this workspace can send to in any 24 hours. Protects your domain and Oracle account if a
-          list is pasted by mistake or an account is misused. Maximum {settings.maxDailyLimit.toLocaleString()}.
-        </p>
-        <div className="mt-3 w-48">
-          <label className={labelClass}>Recipients per 24 hours</label>
-          <input
-            type="number"
-            min={1}
-            max={settings.maxDailyLimit}
-            value={dailyLimit}
-            onChange={(e) => setDailyLimit(e.target.value)}
-            disabled={disabled}
-            className={inputClass}
-          />
-        </div>
       </div>
 
       {!disabled && (
