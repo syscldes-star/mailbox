@@ -8,7 +8,7 @@
 import mongoose, { Schema, type Document, type Model } from "mongoose";
 import type { ProvisioningStep, StepStatus } from "../email-provisioning/types";
 
-export interface IEmailProvisioning extends Document {
+export interface IEmailProvisioning extends Omit<Document, "errors"> {
   domain: string;
   workspaceId: string;
   defaultMailboxLocalPart: string;
