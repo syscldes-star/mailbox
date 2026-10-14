@@ -35,8 +35,9 @@ import {
   Smartphone,
   Link2,
   Info,
+  Paperclip,
 } from "lucide-react";
-import { apiGet, apiPost, apiPatch, ApiError } from "@/lib/api/client";
+import { apiGet, apiPost, apiPatch, apiDelete, apiUpload, ApiError } from "@/lib/api/client";
 import { parseRecipients, recipientsToCsv, MAX_RECIPIENTS_PER_JOB, type ParseResult } from "@/lib/bulk-email/recipients";
 import { extractTags, renderTemplate, withFooter } from "@/lib/bulk-email/template";
 import { campaignSlug } from "@/lib/bulk-email/tracking";
@@ -135,7 +136,18 @@ interface ComposeDraft {
   trackOpens?: boolean;
   trackClicks?: boolean;
   utm?: { source: string; medium: string; campaign: string };
+  attachments?: DraftAttachment[];
 }
+
+interface DraftAttachment {
+  id: string;
+  filename: string;
+  size: number;
+}
+
+/** Matches the server's default (BULK_EMAIL_MAX_ATTACHMENTS_MB); the
+ * server enforces the real limit. */
+const MAX_ATTACHMENTS_BYTES = 1.4 * 1024 * 1024;
 
 const DRAFT_STORAGE_KEY = "bulk-email-draft-v1";
 /** Recipients per upload request when starting a send. */
@@ -239,6 +251,9 @@ export default function BulkEmailPanel() {
   const [utmSource, setUtmSource] = useState("email");
   const [utmMedium, setUtmMedium] = useState("email");
   const [utmCampaign, setUtmCampaign] = useState("");
+  const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const attachInput = useRef<HTMLInputElement>(null);
   const [profileEmail, setProfileEmail] = useState<string | null>(null);
   const [linkResults, setLinkResults] = useState<{ url: string; ok: boolean; status?: number; error?: string }[] | null>(null);
   const [checkingLinks, setCheckingLinks] = useState(false);
@@ -328,6 +343,7 @@ export default function BulkEmailPanel() {
           recipientsText: recipientsText.length < 400_000 ? recipientsText : "",
           trackOpens,
           trackClicks,
+          attachments,
         };
         localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
       } catch {
@@ -335,7 +351,7 @@ export default function BulkEmailPanel() {
       }
     }, 500);
     return () => clearTimeout(t);
-  }, [fromName, replyTo, subject, preheader, bodyHtml, recipientsText, trackOpens, trackClicks]);
+  }, [fromName, replyTo, subject, preheader, bodyHtml, recipientsText, trackOpens, trackClicks, attachments]);
 
   function applyDraft(d: ComposeDraft) {
     if (d.fromDomain) setFromDomain(d.fromDomain);
@@ -348,6 +364,7 @@ export default function BulkEmailPanel() {
     if (d.recipientsText !== undefined) setRecipientsText(d.recipientsText);
     if (d.trackOpens !== undefined) setTrackOpens(d.trackOpens);
     if (d.trackClicks !== undefined) setTrackClicks(d.trackClicks);
+    if (d.attachments !== undefined) setAttachments(d.attachments);
     if (d.utm !== undefined) {
       setUtmEnabled(!!d.utm);
       if (d.utm) {
@@ -365,6 +382,7 @@ export default function BulkEmailPanel() {
     setRecipientsText("");
     setScheduleMode("now");
     setScheduledLocal("");
+    setAttachments([]);
     setDraftRestored(false);
     try {
       localStorage.removeItem(DRAFT_STORAGE_KEY);
@@ -429,6 +447,30 @@ export default function BulkEmailPanel() {
     }
   }
 
+  async function uploadAttachments(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    setComposeError(null);
+    try {
+      for (const file of Array.from(files)) {
+        const form = new FormData();
+        form.append("file", file);
+        const added = await apiUpload<DraftAttachment>("/api/email/attachments", form);
+        setAttachments((list) => [...list, added]);
+      }
+    } catch (err) {
+      setComposeError(err instanceof ApiError ? err.message : "Upload failed.");
+    } finally {
+      setUploading(false);
+      if (attachInput.current) attachInput.current.value = "";
+    }
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((list) => list.filter((a) => a.id !== id));
+    apiDelete(`/api/email/attachments/${id}`).catch(() => {});
+  }
+
   async function saveTemplate() {
     if (!savingTemplateName?.trim()) return;
     try {
@@ -490,7 +532,7 @@ export default function BulkEmailPanel() {
   const canSend = data?.canSend ?? false;
   const noSenders = data !== null && data.senders.length === 0;
   const visualSafe = isVisualSafe(bodyHtml);
-  const findings = useMemo(
+  const baseFindings = useMemo(
     () =>
       runPresendChecks({
         subject,
@@ -503,6 +545,17 @@ export default function BulkEmailPanel() {
     [subject, preheader, bodyHtml, previewHtml, unknownTags, parsed.recipients.length]
   );
   const brokenLinks = linkResults?.filter((r) => !r.ok) ?? [];
+  const attachmentsBytes = attachments.reduce((n, a) => n + a.size, 0);
+  const findings =
+    attachments.length > 0
+      ? [
+          ...baseFindings,
+          {
+            level: "tip" as const,
+            message: "Attachments make bulk email more likely to be filtered -- linking to the file (hosted online) delivers better.",
+          },
+        ]
+      : baseFindings;
 
   async function checkDraftLinks() {
     setCheckingLinks(true);
@@ -544,6 +597,7 @@ export default function BulkEmailPanel() {
       preheader,
       bodyHtml,
       utm: utmEnabled ? { source: utmSource, medium: utmMedium, campaign: utmCampaign || campaignSlug(subject) } : undefined,
+      attachmentIds: attachments.map((a) => a.id),
     };
   }
 
@@ -633,6 +687,8 @@ export default function BulkEmailPanel() {
     !!bodyHtml.trim() &&
     parsed.recipients.length > 0 &&
     (scheduleMode === "now" || !!scheduledLocal) &&
+    attachmentsBytes <= MAX_ATTACHMENTS_BYTES &&
+    !uploading &&
     !tooMany &&
     !missingAddress;
 
@@ -973,6 +1029,54 @@ export default function BulkEmailPanel() {
                   </button>
                 ))}
               </div>
+              {/* Attachments */}
+              <div className="rounded-lg border border-slate-200 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-medium text-slate-700">
+                    Attachments{" "}
+                    <span className={`text-xs font-normal ${attachmentsBytes > MAX_ATTACHMENTS_BYTES ? "text-red-600" : "text-slate-400"}`}>
+                      {(attachmentsBytes / 1048576).toFixed(2)} of {(MAX_ATTACHMENTS_BYTES / 1048576).toFixed(1)} MB
+                    </span>
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => attachInput.current?.click()}
+                    disabled={uploading || !canSend || attachments.length >= 5}
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {uploading ? <Loader2 size={13} className="animate-spin" /> : <Paperclip size={13} />} Attach files
+                  </button>
+                  <input
+                    ref={attachInput}
+                    type="file"
+                    multiple
+                    hidden
+                    accept=".pdf,.png,.jpg,.jpeg,.gif,.webp,.txt,.csv,.ics,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+                    onChange={(e) => uploadAttachments(e.target.files)}
+                  />
+                </div>
+                {attachments.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {attachments.map((a) => (
+                      <li key={a.id} className="flex items-center gap-2 text-xs text-slate-700">
+                        <Paperclip size={12} className="text-slate-400" />
+                        <span className="truncate">{a.filename}</span>
+                        <span className="text-slate-400">{a.size < 1048576 ? `${Math.ceil(a.size / 1024)} KB` : `${(a.size / 1048576).toFixed(1)} MB`}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeAttachment(a.id)}
+                          className="ml-auto rounded p-0.5 text-slate-400 hover:text-red-600"
+                          aria-label={`Remove ${a.filename}`}
+                        >
+                          <XCircle size={13} />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="mt-1 text-xs text-slate-400">PDF, images, Office files, CSV, TXT or .ics -- up to 5 files.</p>
+              </div>
+
               {unknownTags.length > 0 && (
                 <p className="flex items-center gap-1 text-xs text-amber-700">
                   <AlertTriangle size={13} />

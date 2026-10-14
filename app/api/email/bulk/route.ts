@@ -16,6 +16,7 @@ import { User } from "@/lib/models/User";
 import { isValidEmail } from "@/lib/bulk-email/recipients";
 import { resumeStaleJobs } from "@/lib/bulk-email/process-job";
 import { getEmailSettings } from "@/lib/bulk-email/settings";
+import { resolveAttachments } from "@/lib/bulk-email/attachments";
 import { LOCAL_PART_PATTERN, MIN_SEND_ROLE, loadSenderDomains, publicBaseUrl } from "@/lib/bulk-email/access";
 
 export async function GET() {
@@ -76,6 +77,7 @@ interface CreateBody {
   preheader?: string;
   scheduledAt?: string;
   utm?: { source?: string; medium?: string; campaign?: string };
+  attachmentIds?: string[];
 }
 
 export async function POST(req: NextRequest) {
@@ -126,6 +128,9 @@ export async function POST(req: NextRequest) {
       400
     );
   }
+  const attached = await resolveAttachments(auth.workspaceId, body.attachmentIds);
+  if ("error" in attached) return apiError(attached.error!, 400);
+
   const job = await BulkEmailJob.create({
     workspaceId: auth.workspaceId,
     createdBy: auth.userId,
@@ -139,6 +144,7 @@ export async function POST(req: NextRequest) {
     trackOpens: body.trackOpens !== false,
     trackClicks: body.trackClicks !== false,
     utm: cleanUtm(body.utm),
+    attachmentIds: attached.attachments!.length ? attached.attachments!.map((a) => a.id) : undefined,
     publicBaseUrl: publicBaseUrl(req),
     postalAddress: settings.postalAddress,
     status: "preparing",

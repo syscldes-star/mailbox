@@ -11,6 +11,7 @@ import { isValidEmail } from "@/lib/bulk-email/recipients";
 import { buildMessage } from "@/lib/bulk-email/process-job";
 import { sendEmail } from "@/lib/bulk-email/sender";
 import { getEmailSettings } from "@/lib/bulk-email/settings";
+import { loadAttachmentData, resolveAttachments } from "@/lib/bulk-email/attachments";
 import { LOCAL_PART_PATTERN, MIN_SEND_ROLE, loadSenderDomains, publicBaseUrl } from "@/lib/bulk-email/access";
 
 export async function POST(req: NextRequest) {
@@ -20,7 +21,7 @@ export async function POST(req: NextRequest) {
     return apiError("Only managers, admins, and owners can send bulk email.", 403);
   }
 
-  const { testEmail, fromDomain, fromLocalPart, fromName, replyTo, subject, preheader, bodyHtml, sample, utm } = await req.json();
+  const { testEmail, fromDomain, fromLocalPart, fromName, replyTo, subject, preheader, bodyHtml, sample, utm, attachmentIds } = await req.json();
   const to = String(testEmail ?? "").trim().toLowerCase();
   const domain = String(fromDomain ?? "").trim().toLowerCase();
   const localPart = String(fromLocalPart ?? "").trim().toLowerCase();
@@ -36,6 +37,9 @@ export async function POST(req: NextRequest) {
   if (!senders.some((s) => s.domain === domain)) {
     return apiError("That domain isn't ready to send from yet (it needs an active approved sender).", 403);
   }
+
+  const attached = await resolveAttachments(auth.workspaceId, attachmentIds);
+  if ("error" in attached) return apiError(attached.error!, 400);
 
   const sampleVars: Record<string, string> = {};
   for (const [k, v] of Object.entries((sample?.vars ?? {}) as Record<string, unknown>)) sampleVars[k] = String(v ?? "");
@@ -64,7 +68,7 @@ export async function POST(req: NextRequest) {
   );
 
   try {
-    const result = await sendEmail(message);
+    const result = await sendEmail({ ...message, attachments: await loadAttachmentData(attached.attachments!.map((a) => a.id)) });
     if (result.suppressed) {
       return apiError(`${to} is on Oracle's suppression list (a prior bounce or complaint), so it wasn't delivered.`, 409);
     }

@@ -8,6 +8,7 @@
 
 import * as common from "oci-common";
 import * as emaildp from "oci-emaildataplane";
+import { buildMimeMessage, type MimeAttachment } from "./mime";
 
 let cachedClient: emaildp.EmailDPClient | null = null;
 
@@ -36,6 +37,9 @@ export interface OutgoingEmail {
   /** Adds RFC 8058 one-click List-Unsubscribe headers -- Gmail and
    * Yahoo require these for bulk senders. */
   unsubscribeUrl?: string;
+  /** When present, the message is built as MIME and sent through OCI's
+   * raw submission API (the JSON API has no attachment support). */
+  attachments?: MimeAttachment[];
 }
 
 export interface SendResult {
@@ -60,6 +64,29 @@ export async function sendEmail(message: OutgoingEmail): Promise<SendResult> {
   }
 
   try {
+    if (message.attachments && message.attachments.length > 0) {
+      const raw = buildMimeMessage({
+        from: message.from,
+        to: message.to,
+        replyTo: message.replyTo,
+        subject: message.subject,
+        html: message.bodyHtml,
+        text: message.bodyText,
+        headers: headerFields,
+        attachments: message.attachments,
+      });
+      const response = await getClient().submitRawEmail({
+        contentType: emaildp.requests.SubmitRawEmailRequest.ContentType.MessageRfc822,
+        compartmentId: process.env.OCI_COMPARTMENT_OCID!,
+        sender: message.from.email,
+        recipients: [message.to.email],
+        rawMessage: raw,
+        contentLength: raw.length,
+      });
+      const submitted = response.emailRawSubmittedResponse;
+      return { messageId: submitted.messageId, suppressed: (submitted.suppressedRecipients ?? []).length > 0 };
+    }
+
     const response = await getClient().submitEmail({
       submitEmailDetails: {
         sender: {

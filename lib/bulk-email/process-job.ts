@@ -15,6 +15,7 @@ import { EmailSuppression } from "../models/EmailSuppression";
 import { sendEmail, SendError, type OutgoingEmail } from "./sender";
 import { htmlToText, renderTemplate, withFooter, withPreheader } from "./template";
 import { unsubscribeUrl } from "./unsubscribe";
+import { loadAttachmentData } from "./attachments";
 import { addUtmTags, clickTrackingUrl, openPixelUrl, rewriteLinks, withOpenPixel, type UtmTags } from "./tracking";
 
 const CONCURRENCY = Math.max(1, Number(process.env.BULK_EMAIL_CONCURRENCY) || 5);
@@ -109,6 +110,8 @@ export async function processBulkJob(jobId: string): Promise<void> {
   try {
     const job = await BulkEmailJob.findById(jobId).lean();
     if (!job) return;
+    // Loaded once and reused for every recipient.
+    const attachments = await loadAttachmentData(job.attachmentIds ?? []);
 
     // Work through pending recipients a batch at a time, in list order.
     // Each recipient leaves "pending" as soon as it's handled, so the
@@ -147,12 +150,13 @@ export async function processBulkJob(jobId: string): Promise<void> {
               update = { status: "skipped", error: SKIP_REASON[suppressedReason] };
             } else {
               try {
-                const result = await sendWithRetry(
-                  buildMessage(job, r, {
+                const result = await sendWithRetry({
+                  ...buildMessage(job, r, {
                     openPixel: job.trackOpens ? openPixelUrl(job.publicBaseUrl, jobId, r.index) : undefined,
                     wrapLink: job.trackClicks ? (url) => clickTrackingUrl(job.publicBaseUrl, jobId, r.index, url) : undefined,
-                  })
-                );
+                  }),
+                  attachments,
+                });
                 update = result.suppressed
                   ? { status: "skipped", error: "On Oracle's suppression list (prior bounce or complaint)" }
                   : { status: "sent", messageId: result.messageId, sentAt: new Date() };

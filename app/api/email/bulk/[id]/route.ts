@@ -18,6 +18,7 @@ import { BulkEmailJob } from "@/lib/models/BulkEmailJob";
 import { BulkRecipient } from "@/lib/models/BulkRecipient";
 import { resumeStaleJobs, startBulkJob } from "@/lib/bulk-email/process-job";
 import { MIN_SEND_ROLE } from "@/lib/bulk-email/access";
+import { EmailAttachment } from "@/lib/models/EmailAttachment";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -54,6 +55,9 @@ export async function GET(req: NextRequest, { params }: Params) {
       trackOpens: job.trackOpens ?? true,
       trackClicks: job.trackClicks ?? true,
       utm: job.utm,
+      attachments: (
+        await EmailAttachment.find({ _id: { $in: job.attachmentIds ?? [] }, workspaceId: auth.workspaceId }).select("filename size").lean()
+      ).map((a) => ({ id: String(a._id), filename: a.filename, size: a.size })),
       recipients: recipients.map((r) => ({ email: r.email, name: r.name ?? "", vars: r.vars ?? {} })),
     });
   }
