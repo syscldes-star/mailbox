@@ -16,6 +16,7 @@ import { sendEmail, SendError, type OutgoingEmail } from "./sender";
 import { htmlToText, renderTemplate, withFooter, withPreheader } from "./template";
 import { unsubscribeUrl } from "./unsubscribe";
 import { loadAttachmentData } from "./attachments";
+import { signSignupLinks } from "./subscribe";
 import { addUtmTags, clickTrackingUrl, openPixelUrl, rewriteLinks, withOpenPixel, type UtmTags } from "./tracking";
 
 const CONCURRENCY = Math.max(1, Number(process.env.BULK_EMAIL_CONCURRENCY) || 5);
@@ -57,7 +58,11 @@ export function buildMessage(
 ): OutgoingEmail {
   const unsubscribe = unsubscribeUrl(source.publicBaseUrl, source.workspaceId, recipient.email);
   const vars = { ...(recipient.vars ?? {}), email: recipient.email, name: recipient.name ?? "", unsubscribe_url: unsubscribe };
-  const rendered = renderTemplate(withPreheader(withFooter(source.bodyHtml, source.postalAddress), source.preheader), vars, { html: true });
+  const rendered = signSignupLinks(
+    renderTemplate(withPreheader(withFooter(source.bodyHtml, source.postalAddress), source.preheader), vars, { html: true }),
+    source.publicBaseUrl,
+    recipient.email
+  );
   // Links are tagged and wrapped after rendering so merge tags inside
   // URLs are already filled in; the unsubscribe link is never touched.
   // UTM tags go on first, so the click redirect lands on the tagged URL.

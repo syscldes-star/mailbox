@@ -50,6 +50,7 @@ import ListsTab from "@/components/bulk-email/ListsTab";
 import DomainHealth from "@/components/bulk-email/DomainHealth";
 import ContactProfile from "@/components/bulk-email/ContactProfile";
 import FormsTab from "@/components/bulk-email/FormsTab";
+import SubscribersTab from "@/components/bulk-email/SubscribersTab";
 import OverviewTab from "@/components/bulk-email/OverviewTab";
 import ListPicker from "@/components/bulk-email/ListPicker";
 import VisualEditor, { insertHtmlAtCaret, insertTextAtCaret, isVisualSafe } from "@/components/bulk-email/VisualEditor";
@@ -118,6 +119,7 @@ const TAB_HEADING: Record<Tab, { title: string; subtitle: string }> = {
   history: { title: "History", subtitle: "Every send, with delivery, opens and clicks per recipient." },
   lists: { title: "Lists", subtitle: "Saved contact lists and segments to send to." },
   forms: { title: "Signup forms", subtitle: "Let people subscribe themselves, with email confirmation." },
+  subscribers: { title: "Subscribers", subtitle: "Everyone who joined through a signup form and confirmed by email." },
   templates: { title: "Templates", subtitle: "Reusable messages for Compose." },
   unsubscribes: { title: "Unsubscribes", subtitle: "Addresses that are never emailed: unsubscribes, bounces and spam complaints." },
   settings: { title: "Settings", subtitle: "Email marketing settings for this workspace." },
@@ -1540,6 +1542,7 @@ export default function BulkEmailPanel() {
 
       {tab === "overview" && <OverviewTab />}
       {tab === "forms" && <FormsTab senders={data?.senders ?? []} />}
+      {tab === "subscribers" && <SubscribersTab onOpenContact={setProfileEmail} />}
       {tab === "lists" && <ListsTab onUse={applyRecipientsCsv} onOpenContact={setProfileEmail} />}
       {tab === "templates" && <TemplatesTab onUse={applyTemplate} />}
       {tab === "unsubscribes" && <UnsubscribesTab onOpenContact={setProfileEmail} />}

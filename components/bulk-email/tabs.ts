@@ -2,6 +2,6 @@
 // Shared by the client panel and the server [tab] route, so it lives in
 // its own plain (non-"use client") module.
 
-export type Tab = "overview" | "compose" | "history" | "lists" | "forms" | "templates" | "unsubscribes" | "settings";
+export type Tab = "overview" | "compose" | "history" | "lists" | "forms" | "subscribers" | "templates" | "unsubscribes" | "settings";
 
-export const TABS: Tab[] = ["overview", "compose", "history", "lists", "forms", "templates", "unsubscribes", "settings"];
+export const TABS: Tab[] = ["overview", "compose", "history", "lists", "forms", "subscribers", "templates", "unsubscribes", "settings"];
