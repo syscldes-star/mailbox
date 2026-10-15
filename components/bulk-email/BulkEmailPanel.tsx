@@ -613,12 +613,20 @@ export default function BulkEmailPanel() {
    * in; they still confirm by email before they're added to the list. */
   function insertSignupForm(form: ComposeSignupForm) {
     if (!signupForms) return;
+    setShowFormPicker(false);
+    // One button per form is enough; a second copy just looks broken.
+    if (bodyHtml.includes(`/api/subscribe/${form.id}`)) {
+      setComposeError(null);
+      setComposeNotice(`The “${form.name}” button is already in this email.`);
+      return;
+    }
     const url = `${signupForms.baseUrl}/api/subscribe/${form.id}?email={{email}}`;
     const label = escapeHtml(form.buttonText || "Subscribe");
+    // Left-aligned with spacing around it, so it lines up with the text
+    // above instead of floating in the middle of the reader's window.
     const html =
-      `<p style="text-align:center"><a href="${url}" style="display:inline-block;background:#4f46e5;color:#ffffff;` +
-      `padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600">${label}</a></p>`;
-    setShowFormPicker(false);
+      `<p style="margin:24px 0"><a href="${url}" style="display:inline-block;background:#4f46e5;color:#ffffff;` +
+      `padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:600;font-family:sans-serif;font-size:15px">${label}</a></p>`;
     if (bodyView === "visual" && insertHtmlAtCaret(visualEditorEl.current, html)) return;
     setBodyHtml((b) => b + html);
     if (bodyView === "preview") setBodyView(visualSafe ? "visual" : "html");
