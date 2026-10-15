@@ -8,7 +8,7 @@ import { Search, RefreshCw, Loader2, Download, UserPlus } from "lucide-react";
 import { apiGet, ApiError } from "@/lib/api/client";
 import { cardClass, csvEscape, downloadTextFile, formatDate, inputClass, secondaryButton } from "./ui";
 
-type Status = "subscribed" | "unsubscribed" | "bounced" | "complained" | "manual";
+type Status = "subscribed" | "unsubscribed" | "bounced" | "complained" | "manual" | "inactive";
 
 interface Subscriber {
   email: string;
@@ -25,6 +25,7 @@ const STATUS: Record<Status, { label: string; badge: string }> = {
   bounced: { label: "Bounced", badge: "bg-red-50 text-red-700" },
   complained: { label: "Spam complaint", badge: "bg-amber-50 text-amber-800" },
   manual: { label: "Do not email", badge: "bg-indigo-50 text-indigo-700" },
+  inactive: { label: "Inactive", badge: "bg-violet-50 text-violet-700" },
 };
 
 export default function SubscribersTab({ onOpenContact }: { onOpenContact: (email: string) => void }) {

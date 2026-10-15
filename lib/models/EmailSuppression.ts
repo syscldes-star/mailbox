@@ -8,8 +8,8 @@
 import { Schema, type Document, type Model } from "mongoose";
 import { emailModel } from "../db/mongodb";
 
-export type SuppressionReason = "unsubscribed" | "bounced" | "complained" | "manual";
-export const SUPPRESSION_REASONS: SuppressionReason[] = ["unsubscribed", "bounced", "complained", "manual"];
+export type SuppressionReason = "unsubscribed" | "bounced" | "complained" | "manual" | "inactive";
+export const SUPPRESSION_REASONS: SuppressionReason[] = ["unsubscribed", "bounced", "complained", "manual", "inactive"];
 
 export interface IEmailSuppression extends Document {
   workspaceId: string;

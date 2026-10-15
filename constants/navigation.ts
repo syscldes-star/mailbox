@@ -29,6 +29,7 @@ export const navigation: NavigationItem[] = [
           { id: "em-lists", title: "Lists", href: "/email-marketing/lists" },
           { id: "em-forms", title: "Signup forms", href: "/email-marketing/forms" },
           { id: "em-subscribers", title: "Subscribers", href: "/email-marketing/subscribers" },
+          { id: "em-engagement", title: "Engagement", href: "/email-marketing/engagement" },
           { id: "em-templates", title: "Templates", href: "/email-marketing/templates" },
           { id: "em-settings", title: "Settings", href: "/email-marketing/settings" },
         ],

@@ -7,6 +7,8 @@
 import { useEffect, useState } from "react";
 import {
   ArrowLeft,
+  Download,
+  FileBarChart,
   Check,
   FileEdit,
   Loader2,
@@ -19,6 +21,7 @@ import {
 } from "lucide-react";
 import { apiDelete, apiGet, apiPost, apiPut, ApiError } from "@/lib/api/client";
 import { cardClass, formatDate, inputClass, labelClass, primaryButton, secondaryButton } from "./ui";
+import { downloadReportCsv, openReportWindow, writeReport, type ReportData } from "./report";
 
 interface Counts {
   total: number;
@@ -191,6 +194,33 @@ export default function CampaignsTab({
     }
   }
 
+  /** Report for the open campaign: a print-ready tab, or a CSV. */
+  async function report(kind: "print" | "csv") {
+    if (!detail) return;
+    const w = kind === "print" ? openReportWindow() : null;
+    try {
+      const r = await apiGet<{
+        name: string;
+        description: string;
+        counts: ReportData["totals"];
+        sends: (ReportData["totals"] & { subject: string; status: string; date?: string })[];
+        topLinks: ReportData["links"];
+      }>(`/api/email/campaigns/${detail.id}/report`);
+      const data: ReportData = {
+        title: r.name,
+        subtitle: r.description ? `Campaign · ${r.description}` : "Campaign",
+        totals: r.counts,
+        emails: r.sends,
+        links: r.topLinks,
+      };
+      if (kind === "print") writeReport(w, data);
+      else downloadReportCsv(`${r.name.replace(/[^\w-]+/g, "-").toLowerCase() || "campaign"}-report.csv`, data);
+    } catch (err) {
+      w?.close();
+      setError(err instanceof ApiError ? err.message : "Couldn't build the report.");
+    }
+  }
+
   async function deleteDraft(id: string) {
     if (!detail) return;
     try {
@@ -257,6 +287,12 @@ export default function CampaignsTab({
                     <Plus size={15} /> New email
                   </button>
                 )}
+                <button onClick={() => report("print")} className={secondaryButton}>
+                  <FileBarChart size={13} /> Report
+                </button>
+                <button onClick={() => report("csv")} className={secondaryButton}>
+                  <Download size={13} /> CSV
+                </button>
                 <button onClick={() => loadDetail(detail.id)} className={secondaryButton} aria-label="Refresh">
                   <RefreshCw size={13} />
                 </button>

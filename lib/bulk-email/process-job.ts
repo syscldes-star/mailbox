@@ -33,6 +33,7 @@ const SKIP_REASON: Record<string, string> = {
   bounced: "Bounced on an earlier send",
   complained: "Marked an earlier email as spam",
   manual: "On your do-not-email list",
+  inactive: "Inactive -- stopped after no opens or clicks",
 };
 
 export interface MessageSource {

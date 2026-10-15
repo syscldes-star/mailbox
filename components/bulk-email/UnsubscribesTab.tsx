@@ -5,7 +5,7 @@ import { Search, Trash2, Plus, RefreshCw, Loader2, Download } from "lucide-react
 import { apiDelete, apiGet, apiPost, ApiError } from "@/lib/api/client";
 import { cardClass, csvEscape, downloadTextFile, formatDate, inputClass, secondaryButton } from "./ui";
 
-type Reason = "unsubscribed" | "bounced" | "complained" | "manual";
+type Reason = "unsubscribed" | "bounced" | "complained" | "manual" | "inactive";
 
 interface Entry {
   id: string;
@@ -29,6 +29,7 @@ const REASON_LABEL: Record<Reason, string> = {
   bounced: "Bounced",
   complained: "Spam complaint",
   manual: "Added by hand",
+  inactive: "Inactive",
 };
 
 const REASON_BADGE: Record<Reason, string> = {
@@ -36,6 +37,7 @@ const REASON_BADGE: Record<Reason, string> = {
   bounced: "bg-red-50 text-red-700",
   complained: "bg-amber-50 text-amber-800",
   manual: "bg-indigo-50 text-indigo-700",
+  inactive: "bg-violet-50 text-violet-700",
 };
 
 export default function UnsubscribesTab({ onOpenContact }: { onOpenContact: (email: string) => void }) {
@@ -148,7 +150,7 @@ export default function UnsubscribesTab({ onOpenContact }: { onOpenContact: (ema
 
         {data && (
           <div className="mt-4 flex flex-wrap gap-2 text-xs">
-            {(["", "unsubscribed", "bounced", "complained", "manual"] as const).map((r) => {
+            {(["", "unsubscribed", "bounced", "complained", "manual", "inactive"] as const).map((r) => {
               const count = r ? data.counts[r] ?? 0 : Object.values(data.counts).reduce((a, b) => a + (b ?? 0), 0);
               return (
                 <button

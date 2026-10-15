@@ -39,6 +39,9 @@ import {
   FormInput,
   Megaphone,
   FileEdit,
+  FileBarChart,
+  Map as MapIcon,
+  ImagePlus as ImagePlusIcon,
 } from "lucide-react";
 import { apiGet, apiPost, apiPatch, apiPut, apiDelete, apiUpload, ApiError } from "@/lib/api/client";
 import { parseRecipients, recipientsToCsv, MAX_RECIPIENTS_PER_JOB, type ParseResult } from "@/lib/bulk-email/recipients";
@@ -53,6 +56,10 @@ import DomainHealth from "@/components/bulk-email/DomainHealth";
 import ContactProfile from "@/components/bulk-email/ContactProfile";
 import FormsTab from "@/components/bulk-email/FormsTab";
 import CampaignsTab from "@/components/bulk-email/CampaignsTab";
+import EngagementTab from "@/components/bulk-email/EngagementTab";
+import ClickMapModal from "@/components/bulk-email/ClickMap";
+import ImageLibrary from "@/components/bulk-email/ImageLibrary";
+import { downloadReportCsv, openReportWindow, writeReport } from "@/components/bulk-email/report";
 import SubscribersTab from "@/components/bulk-email/SubscribersTab";
 import OverviewTab from "@/components/bulk-email/OverviewTab";
 import ListPicker from "@/components/bulk-email/ListPicker";
@@ -129,6 +136,7 @@ const TAB_HEADING: Record<Tab, { title: string; subtitle: string }> = {
     title: "Subscribers",
     subtitle: "Who joined through your signup forms, and who is never emailed (unsubscribes, bounces, spam complaints).",
   },
+  engagement: { title: "Engagement", subtitle: "Who reads your emails, who has gone quiet, and who to stop emailing." },
   templates: { title: "Templates", subtitle: "Reusable messages for Compose." },
   settings: { title: "Settings", subtitle: "Email marketing settings for this workspace." },
 };
@@ -288,6 +296,7 @@ export default function BulkEmailPanel() {
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
   const [signupForms, setSignupForms] = useState<{ forms: ComposeSignupForm[]; baseUrl: string } | null>(null);
   const [showFormPicker, setShowFormPicker] = useState(false);
+  const [showImageLibrary, setShowImageLibrary] = useState(false);
   const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
   const [campaignId, setCampaignId] = useState("");
   const [newCampaignName, setNewCampaignName] = useState<string | null>(null);
@@ -680,6 +689,15 @@ export default function BulkEmailPanel() {
     const html =
       `<p style="margin:24px 0"><a href="${url}" style="display:inline-block;background:#4f46e5;color:#ffffff;` +
       `padding:12px 28px;border-radius:6px;text-decoration:none;font-weight:600;font-family:sans-serif;font-size:15px">${label}</a></p>`;
+    if (bodyView === "visual" && insertHtmlAtCaret(visualEditorEl.current, html)) return;
+    setBodyHtml((b) => b + html);
+    if (bodyView === "preview") setBodyView(visualSafe ? "visual" : "html");
+  }
+
+  function insertLibraryImage(url: string, alt: string) {
+    setShowImageLibrary(false);
+    const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+    const html = `<p><img src="${esc(url)}" alt="${esc(alt)}" style="max-width:100%;height:auto;" /></p>`;
     if (bodyView === "visual" && insertHtmlAtCaret(visualEditorEl.current, html)) return;
     setBodyHtml((b) => b + html);
     if (bodyView === "preview") setBodyView(visualSafe ? "visual" : "html");
@@ -1257,7 +1275,15 @@ export default function BulkEmailPanel() {
                     {`{{${tag}}}`}
                   </button>
                 ))}
-                <span className="relative ml-auto">
+                <button
+                  type="button"
+                  onClick={() => setShowImageLibrary(true)}
+                  className="ml-auto flex items-center gap-1 rounded-full border border-slate-200 px-2.5 py-0.5 text-slate-600 hover:bg-slate-50"
+                >
+                  <ImagePlusIcon size={12} /> Insert image
+                </button>
+                {showImageLibrary && <ImageLibrary onPick={insertLibraryImage} onClose={() => setShowImageLibrary(false)} />}
+                <span className="relative">
                   <button
                     type="button"
                     onClick={openFormPicker}
@@ -1788,6 +1814,7 @@ export default function BulkEmailPanel() {
           )}
         </div>
       )}
+      {tab === "engagement" && <EngagementTab onOpenContact={setProfileEmail} />}
       {tab === "lists" && <ListsTab onUse={applyRecipientsCsv} onOpenContact={setProfileEmail} />}
       {tab === "templates" && <TemplatesTab onUse={applyTemplate} />}
       {profileEmail && <ContactProfile email={profileEmail} onClose={() => setProfileEmail(null)} />}
@@ -1842,6 +1869,33 @@ function JobDetailPanel({
   }
   const topLinks = [...linkCounts.entries()].sort((a, b) => b[1] - a[1]);
   const busy = (action: string) => actionPending === job.id + action;
+  const [showClickMap, setShowClickMap] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+
+  /** One-send report: this send's totals and its links. */
+  async function report(kind: "print" | "csv") {
+    const w = kind === "print" ? openReportWindow() : null;
+    setReportError(null);
+    try {
+      const map = await apiGet<{ links: { label: string; href: string; clickers: number }[] }>(`/api/email/bulk/${job.id}/clickmap`);
+      const counts = {
+        total: job.total, sent: job.sent, failed: job.failed, skipped: job.skipped,
+        opened: job.opened, clicked: job.clicked, bounced: job.bounced, complained: job.complained,
+      };
+      const data = {
+        title: job.subject,
+        subtitle: `${job.campaignName ? `Campaign “${job.campaignName}” · ` : ""}From ${job.fromLocalPart}@${job.fromDomain}`,
+        totals: counts,
+        emails: [{ ...counts, subject: job.subject, status: job.status, date: job.completedAt ?? job.createdAt }],
+        links: [...map.links].sort((a, b) => b.clickers - a.clickers).map((l) => ({ label: l.label, url: l.href, clickers: l.clickers })),
+      };
+      if (kind === "print") writeReport(w, data);
+      else downloadReportCsv(`send-${job.id}-report.csv`, data);
+    } catch (err) {
+      w?.close();
+      setReportError(err instanceof ApiError ? err.message : "Couldn't build the report.");
+    }
+  }
 
   return (
     <div className="space-y-3">
@@ -1900,6 +1954,20 @@ function JobDetailPanel({
           >
             <RefreshCw size={13} /> Refresh
           </button>
+          {job.trackClicks && (
+            <button
+              onClick={() => setShowClickMap(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              <MapIcon size={13} /> Click map
+            </button>
+          )}
+          <button
+            onClick={() => report("print")}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <FileBarChart size={13} /> Report
+          </button>
           <button
             onClick={() => downloadCsv(detail)}
             className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
@@ -1908,6 +1976,8 @@ function JobDetailPanel({
           </button>
         </div>
       </div>
+      {reportError && <p className="text-xs text-red-600">{reportError}</p>}
+      {showClickMap && <ClickMapModal jobId={job.id} onClose={() => setShowClickMap(false)} />}
 
       <div className="flex gap-1 text-xs">
         {filters.map((f) => (
