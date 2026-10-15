@@ -119,9 +119,11 @@ const TAB_HEADING: Record<Tab, { title: string; subtitle: string }> = {
   history: { title: "History", subtitle: "Every send, with delivery, opens and clicks per recipient." },
   lists: { title: "Lists", subtitle: "Saved contact lists and segments to send to." },
   forms: { title: "Signup forms", subtitle: "Let people subscribe themselves, with email confirmation." },
-  subscribers: { title: "Subscribers", subtitle: "Everyone who joined through a signup form and confirmed by email." },
+  subscribers: {
+    title: "Subscribers",
+    subtitle: "Who joined through your signup forms, and who is never emailed (unsubscribes, bounces, spam complaints).",
+  },
   templates: { title: "Templates", subtitle: "Reusable messages for Compose." },
-  unsubscribes: { title: "Unsubscribes", subtitle: "Addresses that are never emailed: unsubscribes, bounces and spam complaints." },
   settings: { title: "Settings", subtitle: "Email marketing settings for this workspace." },
 };
 
@@ -237,6 +239,17 @@ export default function BulkEmailPanel() {
   const segment = pathname.split("/")[2] as Tab | undefined;
   const tab: Tab = segment && TABS.includes(segment) ? segment : "overview";
   const setTab = (t: Tab) => router.push(`/email-marketing/${t}`);
+  // Subscribers has two views; ?view=unsubscribed opens the second (the
+  // old /email-marketing/unsubscribes URL redirects there).
+  const [audienceView, setAudienceView] = useState<"subscribed" | "unsubscribed">("subscribed");
+  useEffect(() => {
+    if (tab !== "subscribers") return;
+    setAudienceView(new URLSearchParams(window.location.search).get("view") === "unsubscribed" ? "unsubscribed" : "subscribed");
+  }, [tab]);
+  function showAudience(view: "subscribed" | "unsubscribed") {
+    setAudienceView(view);
+    router.replace(view === "unsubscribed" ? "/email-marketing/subscribers?view=unsubscribed" : "/email-marketing/subscribers");
+  }
   const [data, setData] = useState<ListResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -1542,10 +1555,30 @@ export default function BulkEmailPanel() {
 
       {tab === "overview" && <OverviewTab />}
       {tab === "forms" && <FormsTab senders={data?.senders ?? []} />}
-      {tab === "subscribers" && <SubscribersTab onOpenContact={setProfileEmail} />}
+      {tab === "subscribers" && (
+        <div className="space-y-4">
+          <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1 text-sm">
+            {(["subscribed", "unsubscribed"] as const).map((v) => (
+              <button
+                key={v}
+                onClick={() => showAudience(v)}
+                className={`rounded-md px-4 py-1.5 font-medium ${
+                  audienceView === v ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {v === "subscribed" ? "Subscribed" : "Unsubscribed"}
+              </button>
+            ))}
+          </div>
+          {audienceView === "subscribed" ? (
+            <SubscribersTab onOpenContact={setProfileEmail} />
+          ) : (
+            <UnsubscribesTab onOpenContact={setProfileEmail} />
+          )}
+        </div>
+      )}
       {tab === "lists" && <ListsTab onUse={applyRecipientsCsv} onOpenContact={setProfileEmail} />}
       {tab === "templates" && <TemplatesTab onUse={applyTemplate} />}
-      {tab === "unsubscribes" && <UnsubscribesTab onOpenContact={setProfileEmail} />}
       {profileEmail && <ContactProfile email={profileEmail} onClose={() => setProfileEmail(null)} />}
       {tab === "settings" && <SettingsTab onSaved={refresh} />}
     </div>
