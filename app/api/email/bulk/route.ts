@@ -121,13 +121,8 @@ export async function POST(req: NextRequest) {
     return apiError("That domain isn't ready to send from yet (it needs an active approved sender).", 403);
   }
 
+  // Optional: added to the footer when set.
   const settings = await getEmailSettings(auth.workspaceId);
-  if (!settings.postalAddress) {
-    return apiError(
-      "Add your business postal address in Email Marketing → Settings first. Anti-spam laws require it in marketing email.",
-      400
-    );
-  }
   const attached = await resolveAttachments(auth.workspaceId, body.attachmentIds);
   if ("error" in attached) return apiError(attached.error!, 400);
 

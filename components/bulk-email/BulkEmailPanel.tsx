@@ -583,7 +583,6 @@ export default function BulkEmailPanel() {
       setCheckingLinks(false);
     }
   }
-  const missingAddress = data !== null && !data.settings.postalAddress;
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -727,8 +726,7 @@ export default function BulkEmailPanel() {
     (scheduleMode === "now" || !!scheduledLocal) &&
     attachmentsBytes <= MAX_ATTACHMENTS_BYTES &&
     !uploading &&
-    !tooMany &&
-    !missingAddress;
+    !tooMany;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -753,17 +751,6 @@ export default function BulkEmailPanel() {
               <AlertTriangle size={16} className="mt-0.5 shrink-0" />
               No domain is ready to send from yet. A domain can send once its &quot;Approved sender&quot; step is
               complete on the Domains page.
-            </div>
-          )}
-          {missingAddress && (
-            <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-              <span>
-                Add your business postal address before sending -- anti-spam laws require it in marketing email.{" "}
-                <button onClick={() => setTab("settings")} className="font-medium underline">
-                  Open Settings
-                </button>
-              </span>
             </div>
           )}
           {data && !canSend && (
