@@ -37,8 +37,10 @@ import {
   Info,
   Paperclip,
   FormInput,
+  Megaphone,
+  FileEdit,
 } from "lucide-react";
-import { apiGet, apiPost, apiPatch, apiDelete, apiUpload, ApiError } from "@/lib/api/client";
+import { apiGet, apiPost, apiPatch, apiPut, apiDelete, apiUpload, ApiError } from "@/lib/api/client";
 import { parseRecipients, recipientsToCsv, MAX_RECIPIENTS_PER_JOB, type ParseResult } from "@/lib/bulk-email/recipients";
 import { escapeHtml, extractTags, renderTemplate, withFooter } from "@/lib/bulk-email/template";
 import { campaignSlug } from "@/lib/bulk-email/tracking";
@@ -50,6 +52,7 @@ import ListsTab from "@/components/bulk-email/ListsTab";
 import DomainHealth from "@/components/bulk-email/DomainHealth";
 import ContactProfile from "@/components/bulk-email/ContactProfile";
 import FormsTab from "@/components/bulk-email/FormsTab";
+import CampaignsTab from "@/components/bulk-email/CampaignsTab";
 import SubscribersTab from "@/components/bulk-email/SubscribersTab";
 import OverviewTab from "@/components/bulk-email/OverviewTab";
 import ListPicker from "@/components/bulk-email/ListPicker";
@@ -82,6 +85,8 @@ interface JobSummary {
   trackOpens?: boolean;
   trackClicks?: boolean;
   createdByName?: string;
+  campaignId?: string;
+  campaignName?: string;
 }
 
 interface JobRecipient {
@@ -115,6 +120,7 @@ interface ListResponse {
 
 const TAB_HEADING: Record<Tab, { title: string; subtitle: string }> = {
   overview: { title: "Overview", subtitle: "How your email marketing is performing." },
+  campaigns: { title: "Campaigns", subtitle: "Group related emails, keep drafts, and see their results together." },
   compose: { title: "Compose", subtitle: "Send a personalised email to a list of recipients from one of your domains." },
   history: { title: "History", subtitle: "Every send, with delivery, opens and clicks per recipient." },
   lists: { title: "Lists", subtitle: "Saved contact lists and segments to send to." },
@@ -142,6 +148,10 @@ interface ComposeDraft {
   trackClicks?: boolean;
   utm?: { source: string; medium: string; campaign: string };
   attachments?: DraftAttachment[];
+  /** Campaign the email belongs to ("" for none). */
+  campaignId?: string;
+  /** Saved draft being edited, if any. */
+  draftId?: string | null;
 }
 
 interface ComposeSignupForm {
@@ -278,6 +288,12 @@ export default function BulkEmailPanel() {
   const [attachments, setAttachments] = useState<DraftAttachment[]>([]);
   const [signupForms, setSignupForms] = useState<{ forms: ComposeSignupForm[]; baseUrl: string } | null>(null);
   const [showFormPicker, setShowFormPicker] = useState(false);
+  const [campaigns, setCampaigns] = useState<{ id: string; name: string }[]>([]);
+  const [campaignId, setCampaignId] = useState("");
+  const [newCampaignName, setNewCampaignName] = useState<string | null>(null);
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [openCampaignId, setOpenCampaignId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const attachInput = useRef<HTMLInputElement>(null);
   const [profileEmail, setProfileEmail] = useState<string | null>(null);
@@ -336,6 +352,22 @@ export default function BulkEmailPanel() {
     }
   }
 
+  async function loadCampaigns() {
+    try {
+      const res = await apiGet<{ campaigns: { id: string; name: string }[] }>("/api/email/campaigns");
+      setCampaigns(res.campaigns.map((c) => ({ id: c.id, name: c.name })));
+    } catch {
+      // Campaigns are optional -- Compose works without them.
+    }
+  }
+
+  useEffect(() => {
+    if (tab === "compose") loadCampaigns();
+    // Leaving Campaigns closes the open campaign, so the sidebar link
+    // always lands on the list.
+    if (tab !== "campaigns") setOpenCampaignId(null);
+  }, [tab]);
+
   useEffect(() => {
     refresh();
     loadTemplates();
@@ -370,6 +402,8 @@ export default function BulkEmailPanel() {
           trackOpens,
           trackClicks,
           attachments,
+          campaignId,
+          draftId,
         };
         localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
       } catch {
@@ -377,7 +411,7 @@ export default function BulkEmailPanel() {
       }
     }, 500);
     return () => clearTimeout(t);
-  }, [fromName, replyTo, subject, preheader, bodyHtml, recipientsText, trackOpens, trackClicks, attachments]);
+  }, [fromName, replyTo, subject, preheader, bodyHtml, recipientsText, trackOpens, trackClicks, attachments, campaignId, draftId]);
 
   function applyDraft(d: ComposeDraft) {
     if (d.fromDomain) setFromDomain(d.fromDomain);
@@ -391,6 +425,8 @@ export default function BulkEmailPanel() {
     if (d.trackOpens !== undefined) setTrackOpens(d.trackOpens);
     if (d.trackClicks !== undefined) setTrackClicks(d.trackClicks);
     if (d.attachments !== undefined) setAttachments(d.attachments);
+    if (d.campaignId !== undefined) setCampaignId(d.campaignId ?? "");
+    if (d.draftId !== undefined) setDraftId(d.draftId ?? null);
     if (d.utm !== undefined) {
       setUtmEnabled(!!d.utm);
       if (d.utm) {
@@ -409,6 +445,8 @@ export default function BulkEmailPanel() {
     setScheduleMode("now");
     setScheduledLocal("");
     setAttachments([]);
+    setCampaignId("");
+    setDraftId(null);
     setDraftRestored(false);
     try {
       localStorage.removeItem(DRAFT_STORAGE_KEY);
@@ -439,7 +477,7 @@ export default function BulkEmailPanel() {
       }
       const who = audience === "all" ? "all recipients" : audience === "not_opened" ? "people who didn't open" : "people who didn't click";
       loadIntoCompose(
-        { ...d, recipientsText: recipientsToCsv(d.recipients) },
+        { ...d, campaignId: d.campaignId ?? "", draftId: null, recipientsText: recipientsToCsv(d.recipients) },
         `Loaded "${d.subject}" with ${d.recipients.length.toLocaleString()} ${who}. Review it, then send.`
       );
     } catch (err) {
@@ -656,9 +694,102 @@ export default function BulkEmailPanel() {
       subject,
       preheader,
       bodyHtml,
-      utm: utmEnabled ? { source: utmSource, medium: utmMedium, campaign: utmCampaign || campaignSlug(subject) } : undefined,
+      utm: utmEnabled
+        ? { source: utmSource, medium: utmMedium, campaign: utmCampaign || campaignSlug(campaignName || subject) }
+        : undefined,
       attachmentIds: attachments.map((a) => a.id),
+      campaignId: campaignId || undefined,
     };
+  }
+
+  const campaignName = campaigns.find((c) => c.id === campaignId)?.name ?? "";
+
+  async function createCampaignFromCompose() {
+    const name = newCampaignName?.trim();
+    if (!name) return;
+    try {
+      const res = await apiPost<{ id: string; name: string }>("/api/email/campaigns", { name });
+      setCampaigns((list) => [{ id: res.id, name: res.name }, ...list]);
+      setCampaignId(res.id);
+      setNewCampaignName(null);
+    } catch (err) {
+      setComposeError(err instanceof ApiError ? err.message : "Couldn't create the campaign.");
+    }
+  }
+
+  /** Saves Compose as a draft (new, or over the one being edited). */
+  async function saveDraft() {
+    setSavingDraft(true);
+    setComposeError(null);
+    setComposeNotice(null);
+    try {
+      const payload = { ...draftPayload(), recipientsText, trackOpens, trackClicks, attachments, campaignId: campaignId || null };
+      if (draftId) {
+        await apiPut(`/api/email/drafts/${draftId}`, payload);
+      } else {
+        const res = await apiPost<{ id: string }>("/api/email/drafts", payload);
+        setDraftId(res.id);
+      }
+      setComposeNotice(
+        campaignName ? `Draft saved in campaign “${campaignName}”. Find it under Campaigns.` : "Draft saved. Pick a campaign to find it under Campaigns."
+      );
+    } catch (err) {
+      setComposeError(err instanceof ApiError ? err.message : "Couldn't save the draft.");
+    } finally {
+      setSavingDraft(false);
+    }
+  }
+
+  async function editDraft(id: string) {
+    try {
+      const d = await apiGet<ComposeDraft & { id: string; utm?: ComposeDraft["utm"] | null }>(`/api/email/drafts/${id}`);
+      clearCompose();
+      loadIntoCompose(
+        {
+          fromDomain: d.fromDomain,
+          fromLocalPart: d.fromLocalPart,
+          fromName: d.fromName ?? "",
+          replyTo: d.replyTo ?? "",
+          subject: d.subject ?? "",
+          preheader: d.preheader ?? "",
+          bodyHtml: d.bodyHtml ?? "",
+          recipientsText: d.recipientsText ?? "",
+          trackOpens: d.trackOpens,
+          trackClicks: d.trackClicks,
+          utm: d.utm ?? undefined,
+          attachments: d.attachments ?? [],
+          campaignId: d.campaignId ?? "",
+          draftId: id,
+        },
+        "Draft loaded. Saving updates this draft; sending it removes it from your drafts."
+      );
+    } catch (err) {
+      setComposeError(err instanceof ApiError ? err.message : "Couldn't open the draft.");
+      setTab("compose");
+    }
+  }
+
+  function newEmailInCampaign(c: { id: string; name: string }) {
+    clearCompose();
+    setCampaigns((list) => (list.some((x) => x.id === c.id) ? list : [c, ...list]));
+    setCampaignId(c.id);
+    setComposeError(null);
+    setComposeNotice(`New email in campaign “${c.name}”. Save it as a draft or send it when it's ready.`);
+    setTab("compose");
+  }
+
+  function openSendInHistory(jobId: string) {
+    setTab("history");
+    setExpandedId(jobId);
+    setDetail(null);
+    setRecipientFilter("all");
+    refresh();
+    refreshDetail(jobId);
+  }
+
+  function openCampaign(id: string) {
+    setOpenCampaignId(id);
+    setTab("campaigns");
   }
 
   async function handleTest() {
@@ -697,6 +828,8 @@ export default function BulkEmailPanel() {
       }
       setSendProgress("Starting…");
       await apiPatch(`/api/email/bulk/${created.id}`, { action: "start" });
+      // Sent, so it's no longer a draft (the send keeps its campaign).
+      if (draftId) apiDelete(`/api/email/drafts/${draftId}`).catch(() => {});
       setConfirming(false);
       clearCompose();
       await refresh();
@@ -783,38 +916,86 @@ export default function BulkEmailPanel() {
             </div>
           )}
 
-          {(draftRestored || templates.length > 0) && (
-            <div className="flex flex-wrap items-center gap-3 text-sm">
-              {draftRestored && (
-                <span className="flex items-center gap-2 rounded-lg bg-indigo-50 px-3 py-1.5 text-indigo-800">
-                  Restored your unsent draft.
-                  <button onClick={clearCompose} className="font-medium underline">
-                    Start fresh
+          {/* Campaign, draft and template */}
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <label className="flex items-center gap-2 text-slate-600">
+              <Megaphone size={15} />
+              {newCampaignName === null ? (
+                <select
+                  value={campaignId}
+                  onChange={(e) => (e.target.value === "__new" ? setNewCampaignName("") : setCampaignId(e.target.value))}
+                  disabled={!canSend}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm"
+                >
+                  <option value="">No campaign</option>
+                  {campaigns.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                  <option value="__new">+ New campaign…</option>
+                </select>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <input
+                    value={newCampaignName}
+                    onChange={(e) => setNewCampaignName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && createCampaignFromCompose()}
+                    placeholder="Campaign name"
+                    autoFocus
+                    className="w-48 rounded-lg border border-slate-200 px-2 py-1.5 text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={createCampaignFromCompose}
+                    disabled={!newCampaignName.trim()}
+                    className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+                  >
+                    Create
+                  </button>
+                  <button type="button" onClick={() => setNewCampaignName(null)} className="text-xs text-slate-500">
+                    Cancel
                   </button>
                 </span>
               )}
-              {templates.length > 0 && (
-                <label className="ml-auto flex items-center gap-2 text-slate-600">
-                  <FileText size={15} />
-                  <select
-                    value=""
-                    onChange={(e) => {
-                      const t = templates.find((x) => x.id === e.target.value);
-                      if (t) applyTemplate(t);
-                    }}
-                    className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm"
-                  >
-                    <option value="">Load a template…</option>
-                    {templates.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </div>
-          )}
+            </label>
+            {draftId && (
+              <span className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-1.5 text-amber-800">
+                <FileEdit size={14} /> Editing a saved draft
+                <button onClick={clearCompose} className="font-medium underline">
+                  Start a new email
+                </button>
+              </span>
+            )}
+            {draftRestored && !draftId && (
+              <span className="flex items-center gap-2 rounded-lg bg-indigo-50 px-3 py-1.5 text-indigo-800">
+                Restored your unsent draft.
+                <button onClick={clearCompose} className="font-medium underline">
+                  Start fresh
+                </button>
+              </span>
+            )}
+            {templates.length > 0 && (
+              <label className="ml-auto flex items-center gap-2 text-slate-600">
+                <FileText size={15} />
+                <select
+                  value=""
+                  onChange={(e) => {
+                    const t = templates.find((x) => x.id === e.target.value);
+                    if (t) applyTemplate(t);
+                  }}
+                  className="rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-sm"
+                >
+                  <option value="">Load a template…</option>
+                  {templates.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+          </div>
 
           {/* Sender */}
           <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -1292,8 +1473,16 @@ export default function BulkEmailPanel() {
             )}
           </div>
 
-          {/* Save as template + schedule */}
+          {/* Save draft / template + schedule */}
           <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <button
+              type="button"
+              onClick={saveDraft}
+              disabled={!canSend || savingDraft}
+              className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              {savingDraft ? <Loader2 size={15} className="animate-spin" /> : <FileEdit size={15} />} {draftId ? "Save draft" : "Save as draft"}
+            </button>
             {savingTemplateName === null ? (
               <button
                 type="button"
@@ -1469,7 +1658,20 @@ export default function BulkEmailPanel() {
                           <td className="px-3 py-3 text-slate-400">
                             {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                           </td>
-                          <td className="max-w-[240px] truncate px-3 py-3 font-medium text-slate-900">{job.subject}</td>
+                          <td className="max-w-[240px] px-3 py-3">
+                            <p className="truncate font-medium text-slate-900">{job.subject}</p>
+                            {job.campaignId && job.campaignName && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openCampaign(job.campaignId!);
+                                }}
+                                className="mt-0.5 inline-flex max-w-full items-center gap-1 truncate rounded-full bg-violet-50 px-2 py-0.5 text-xs text-violet-700 hover:bg-violet-100"
+                              >
+                                <Megaphone size={11} /> {job.campaignName}
+                              </button>
+                            )}
+                          </td>
                           <td className="px-3 py-3 text-slate-600">
                             {job.fromLocalPart}@{job.fromDomain}
                             {job.createdByName && <p className="text-xs text-slate-400">by {job.createdByName}</p>}
@@ -1554,6 +1756,15 @@ export default function BulkEmailPanel() {
       )}
 
       {tab === "overview" && <OverviewTab />}
+      {tab === "campaigns" && (
+        <CampaignsTab
+          selectedId={openCampaignId}
+          onSelect={setOpenCampaignId}
+          onNewEmail={newEmailInCampaign}
+          onEditDraft={editDraft}
+          onOpenSend={openSendInHistory}
+        />
+      )}
       {tab === "forms" && <FormsTab senders={data?.senders ?? []} />}
       {tab === "subscribers" && (
         <div className="space-y-4">

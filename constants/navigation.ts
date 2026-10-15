@@ -23,6 +23,7 @@ export const navigation: NavigationItem[] = [
         title: "Email Marketing",
         children: [
           { id: "em-overview", title: "Overview", href: "/email-marketing/overview" },
+          { id: "em-campaigns", title: "Campaigns", href: "/email-marketing/campaigns" },
           { id: "em-compose", title: "Compose", href: "/email-marketing/compose" },
           { id: "em-history", title: "History", href: "/email-marketing/history" },
           { id: "em-lists", title: "Lists", href: "/email-marketing/lists" },
