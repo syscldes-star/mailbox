@@ -104,7 +104,9 @@ function SidebarSubMenuGroup({
       <div
         className={clsx(
           "overflow-hidden transition-all duration-300",
-          open ? "max-h-96" : "max-h-0"
+          // Generous cap (it's only there for the open/close animation) so
+          // long menus like Email Marketing aren't cut off.
+          open ? "max-h-[2000px]" : "max-h-0"
         )}
       >
         <SidebarSubMenu items={item.children ?? []} variant={variant} depth={depth + 1} />
