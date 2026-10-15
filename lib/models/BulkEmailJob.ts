@@ -34,6 +34,8 @@ export interface IBulkEmailJob extends Document {
   fromName?: string;
   replyTo?: string;
   subject: string;
+  /** Campaign this send belongs to, if any. */
+  campaignId?: string;
   /** Inbox preview text shown after the subject in most mail clients. */
   preheader?: string;
   bodyHtml: string;
@@ -87,6 +89,7 @@ const BulkEmailJobSchema = new Schema<IBulkEmailJob>(
     fromName: String,
     replyTo: String,
     subject: { type: String, required: true },
+    campaignId: String,
     preheader: String,
     bodyHtml: { type: String, required: true },
     trackOpens: { type: Boolean, default: false },
@@ -112,6 +115,8 @@ const BulkEmailJobSchema = new Schema<IBulkEmailJob>(
   },
   { timestamps: true }
 );
+
+BulkEmailJobSchema.index({ workspaceId: 1, campaignId: 1, createdAt: -1 });
 
 export const BulkEmailJob: Model<IBulkEmailJob> = emailModel<IBulkEmailJob>("BulkEmailJob", BulkEmailJobSchema);
 

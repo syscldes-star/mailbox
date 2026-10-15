@@ -60,8 +60,8 @@ export default function SettingsTab({ onSaved }: { onSaved: () => void }) {
       <div className={cardClass}>
         <h2 className="text-sm font-semibold text-slate-900">Business postal address</h2>
         <p className="mt-1 text-xs text-slate-500">
-          Shown in the footer of every bulk email. Anti-spam laws (such as CAN-SPAM) require a physical address in
-          marketing email, so sending is blocked until this is set.
+          Optional. When set, it&apos;s shown in the footer of every bulk email. Some anti-spam laws (such as
+          CAN-SPAM in the US) expect a physical address in marketing email.
         </p>
         <textarea
           value={postalAddress}

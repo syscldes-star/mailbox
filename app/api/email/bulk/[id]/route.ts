@@ -50,6 +50,7 @@ export async function GET(req: NextRequest, { params }: Params) {
       fromName: job.fromName ?? "",
       replyTo: job.replyTo ?? "",
       subject: job.subject,
+      campaignId: job.campaignId,
       preheader: job.preheader ?? "",
       bodyHtml: job.bodyHtml,
       trackOpens: job.trackOpens ?? true,

@@ -72,6 +72,9 @@ export async function sendEmail(message: OutgoingEmail): Promise<SendResult> {
 
   try {
     if (message.attachments && message.attachments.length > 0) {
+      // The SDK can only sign a string or a stream body -- a Buffer fails
+      // with "Unable to read body content". The MIME is pure ASCII (every
+      // part is base64, headers are RFC 2047-encoded), so a string is exact.
       const raw = buildMimeMessage({
         from: message.from,
         to: message.to,
@@ -81,14 +84,14 @@ export async function sendEmail(message: OutgoingEmail): Promise<SendResult> {
         text: message.bodyText,
         headers: headerFields,
         attachments: message.attachments,
-      });
+      }).toString("ascii");
       const response = await getClient().submitRawEmail({
         contentType: emaildp.requests.SubmitRawEmailRequest.ContentType.MessageRfc822,
         compartmentId: process.env.OCI_COMPARTMENT_OCID!,
         sender: message.from.email,
         recipients: [message.to.email],
         rawMessage: raw,
-        contentLength: raw.length,
+        contentLength: Buffer.byteLength(raw),
       });
       const submitted = response.emailRawSubmittedResponse;
       return { messageId: submitted.messageId, suppressed: (submitted.suppressedRecipients ?? []).length > 0 };

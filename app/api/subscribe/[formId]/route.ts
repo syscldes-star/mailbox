@@ -16,7 +16,8 @@ import { SignupForm } from "@/lib/models/SignupForm";
 import { EmailSuppression } from "@/lib/models/EmailSuppression";
 import { isValidEmail } from "@/lib/bulk-email/recipients";
 import { escapeHtml } from "@/lib/bulk-email/template";
-import { allow, publicPage, sendConfirmationEmail, signConfirmToken } from "@/lib/bulk-email/subscribe";
+import { allow, publicPage, sendConfirmationEmail, signConfirmToken, verifyFormEmail } from "@/lib/bulk-email/subscribe";
+import { ContactList } from "@/lib/models/ContactList";
 import { getEmailSettings } from "@/lib/bulk-email/settings";
 import { publicBaseUrl } from "@/lib/bulk-email/access";
 
@@ -32,11 +33,28 @@ async function loadForm(formId: string) {
   return SignupForm.findOne({ _id: formId, active: true });
 }
 
+/** On the form's list and not unsubscribed, bounced or blocked. */
+async function isSubscribed(form: { listId: string; workspaceId: string }, email: string) {
+  if (!mongoose.isValidObjectId(form.listId)) return false;
+  const [onList, suppressed] = await Promise.all([
+    ContactList.exists({ _id: form.listId, workspaceId: form.workspaceId, "contacts.email": email }),
+    EmailSuppression.exists({ workspaceId: form.workspaceId, email }),
+  ]);
+  return !!onList && !suppressed;
+}
+
+function alreadySubscribedPage(form: { heading: string }, email: string) {
+  return publicPage(
+    "Already subscribed",
+    `<h1>You're already subscribed</h1><p><strong>${escapeHtml(email)}</strong> is already subscribed to ${escapeHtml(form.heading)}. There's nothing more to do.</p>`
+  );
+}
+
 function formHtml(
   form: { heading: string; description?: string; buttonText: string; askName: boolean },
   action: string,
   error?: string,
-  prefill: { email?: string; name?: string } = {}
+  prefill: { email?: string; name?: string; signature?: string } = {}
 ) {
   const value = (v?: string) => (v ? ` value="${escapeHtml(v)}"` : "");
   return (
@@ -50,6 +68,7 @@ function formHtml(
     // not named or labelled like anything a browser autofills (it used to
     // be "website", which Chrome filled in for real people).
     `<div class="hp" aria-hidden="true"><label for="${HONEYPOT}">Leave this empty</label><input id="${HONEYPOT}" name="${HONEYPOT}" type="text" tabindex="-1" autocomplete="off" data-lpignore="true" data-1p-ignore></div>` +
+    (prefill.signature ? `<input type="hidden" name="k" value="${escapeHtml(prefill.signature)}">` : "") +
     `<button type="submit">${escapeHtml(form.buttonText || "Subscribe")}</button>` +
     `</form><p class="small">We'll email you a link to confirm. You can unsubscribe at any time.</p>`
   );
@@ -69,7 +88,11 @@ export async function GET(req: NextRequest, { params }: Params) {
   const q = req.nextUrl.searchParams;
   const email = (q.get("email") ?? "").trim().replace(/ /g, "+").slice(0, 254);
   const name = (q.get("name") ?? "").trim().slice(0, 200);
-  const prefill = { email: isValidEmail(email) ? email : undefined, name: name || undefined };
+  const signature = q.get("k") ?? "";
+  const signed = isValidEmail(email) && verifyFormEmail(formId, email.toLowerCase(), signature);
+  // Opened from their own email (signed link) and already on the list.
+  if (signed && (await isSubscribed(form, email.toLowerCase()))) return alreadySubscribedPage(form, email);
+  const prefill = { email: isValidEmail(email) ? email : undefined, name: name || undefined, signature: signed ? signature : undefined };
   return publicPage(form.heading, formHtml(form, req.nextUrl.pathname, undefined, prefill));
 }
 
@@ -87,18 +110,21 @@ export async function POST(req: NextRequest, { params }: Params) {
   let email = "";
   let name = "";
   let honeypot = "";
+  let signature = "";
   try {
     if (wantsJson) {
       const body = await req.json();
       email = String(body.email ?? "");
       name = String(body.name ?? "");
       honeypot = String(body[HONEYPOT] ?? body.website ?? "");
+      signature = String(body.k ?? "");
     } else {
       const body = await req.formData();
       email = String(body.get("email") ?? "");
       name = String(body.get("name") ?? "");
       // "website" is the honeypot name in older embed snippets.
       honeypot = String(body.get(HONEYPOT) ?? body.get("website") ?? "");
+      signature = String(body.get("k") ?? "");
     }
   } catch {
     return reply(false, "Something went wrong reading the form -- please try again.", 400);
@@ -117,6 +143,14 @@ export async function POST(req: NextRequest, { params }: Params) {
   if (honeypot) {
     console.warn(`[signup] no confirmation sent to ${email} (form ${formId}): hidden spam-trap field was filled in`);
     return reply(true, confirmMessage);
+  }
+
+  // Submitted from a signed link (their own email) and already subscribed:
+  // say so instead of sending another confirmation. Unsigned submissions
+  // get the usual reply, so the form can't be used to probe a list.
+  if (signature && verifyFormEmail(formId, email, signature) && (await isSubscribed(form, email))) {
+    if (wantsJson) return reply(true, `${email} is already subscribed.`);
+    return alreadySubscribedPage(form, email);
   }
 
   const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";

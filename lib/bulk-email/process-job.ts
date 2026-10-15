@@ -16,6 +16,7 @@ import { sendEmail, SendError, type OutgoingEmail } from "./sender";
 import { htmlToText, renderTemplate, withFooter, withPreheader } from "./template";
 import { unsubscribeUrl } from "./unsubscribe";
 import { loadAttachmentData } from "./attachments";
+import { signSignupLinks } from "./subscribe";
 import { addUtmTags, clickTrackingUrl, openPixelUrl, rewriteLinks, withOpenPixel, type UtmTags } from "./tracking";
 
 const CONCURRENCY = Math.max(1, Number(process.env.BULK_EMAIL_CONCURRENCY) || 5);
@@ -32,6 +33,7 @@ const SKIP_REASON: Record<string, string> = {
   bounced: "Bounced on an earlier send",
   complained: "Marked an earlier email as spam",
   manual: "On your do-not-email list",
+  inactive: "Inactive -- stopped after no opens or clicks",
 };
 
 export interface MessageSource {
@@ -57,12 +59,21 @@ export function buildMessage(
 ): OutgoingEmail {
   const unsubscribe = unsubscribeUrl(source.publicBaseUrl, source.workspaceId, recipient.email);
   const vars = { ...(recipient.vars ?? {}), email: recipient.email, name: recipient.name ?? "", unsubscribe_url: unsubscribe };
-  const rendered = renderTemplate(withPreheader(withFooter(source.bodyHtml, source.postalAddress), source.preheader), vars, { html: true });
+  const rendered = signSignupLinks(
+    renderTemplate(withPreheader(withFooter(source.bodyHtml, source.postalAddress), source.preheader), vars, { html: true }),
+    source.publicBaseUrl,
+    recipient.email
+  );
   // Links are tagged and wrapped after rendering so merge tags inside
   // URLs are already filled in; the unsubscribe link is never touched.
   // UTM tags go on first, so the click redirect lands on the tagged URL.
   const isUnsubscribe = (url: string) => url === unsubscribe;
-  const tagged = source.utm ? rewriteLinks(rendered, (url) => addUtmTags(url, source.utm!), isUnsubscribe) : rendered;
+  // Campaign tags are for the sender's own website analytics, so links
+  // into this app (e.g. an inserted signup form) are left untagged --
+  // nothing reads them there, and click tracking already counts them.
+  const appBase = `${source.publicBaseUrl.replace(/\/+$/, "")}/api/`;
+  const skipUtm = (url: string) => isUnsubscribe(url) || url.startsWith(appBase);
+  const tagged = source.utm ? rewriteLinks(rendered, (url) => addUtmTags(url, source.utm!), skipUtm) : rendered;
   const linked = tracking.wrapLink ? rewriteLinks(tagged, tracking.wrapLink, isUnsubscribe) : tagged;
   const html = tracking.openPixel ? withOpenPixel(linked, tracking.openPixel) : linked;
   return {

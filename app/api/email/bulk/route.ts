@@ -17,6 +17,8 @@ import { isValidEmail } from "@/lib/bulk-email/recipients";
 import { resumeStaleJobs } from "@/lib/bulk-email/process-job";
 import { getEmailSettings } from "@/lib/bulk-email/settings";
 import { resolveAttachments } from "@/lib/bulk-email/attachments";
+import { findCampaign } from "@/lib/bulk-email/campaigns";
+import { Campaign } from "@/lib/models/Campaign";
 import { LOCAL_PART_PATTERN, MIN_SEND_ROLE, loadSenderDomains, publicBaseUrl } from "@/lib/bulk-email/access";
 
 export async function GET() {
@@ -31,7 +33,7 @@ export async function GET() {
     BulkEmailJob.find({ workspaceId: auth.workspaceId, status: { $ne: "preparing" } })
       .sort({ createdAt: -1 })
       .limit(50)
-      .select("fromDomain fromLocalPart fromName subject status error createdAt completedAt scheduledAt counts trackOpens trackClicks createdBy")
+      .select("fromDomain fromLocalPart fromName subject campaignId status error createdAt completedAt scheduledAt counts trackOpens trackClicks createdBy")
       .lean(),
   ]);
 
@@ -44,6 +46,11 @@ export async function GET() {
     ])
   );
 
+  const campaignIds = [...new Set(jobs.map((j) => j.campaignId).filter((id): id is string => !!id && mongoose.isValidObjectId(id)))];
+  const campaignNames = new Map(
+    (await Campaign.find({ _id: { $in: campaignIds }, workspaceId: auth.workspaceId }).select("name").lean()).map((c) => [String(c._id), c.name])
+  );
+
   return apiSuccess({
     senders,
     canSend: hasMinimumRole(auth.membership.role, MIN_SEND_ROLE),
@@ -53,6 +60,7 @@ export async function GET() {
       ...rest,
       ...counts,
       createdByName: creators.get(rest.createdBy) ?? "Unknown",
+      campaignName: rest.campaignId ? campaignNames.get(rest.campaignId) : undefined,
     })),
   });
 }
@@ -78,6 +86,7 @@ interface CreateBody {
   scheduledAt?: string;
   utm?: { source?: string; medium?: string; campaign?: string };
   attachmentIds?: string[];
+  campaignId?: string;
 }
 
 export async function POST(req: NextRequest) {
@@ -121,12 +130,12 @@ export async function POST(req: NextRequest) {
     return apiError("That domain isn't ready to send from yet (it needs an active approved sender).", 403);
   }
 
+  // Optional: added to the footer when set.
   const settings = await getEmailSettings(auth.workspaceId);
-  if (!settings.postalAddress) {
-    return apiError(
-      "Add your business postal address in Email Marketing → Settings first. Anti-spam laws require it in marketing email.",
-      400
-    );
+  let campaignId: string | undefined;
+  if (body.campaignId) {
+    if (!(await findCampaign(auth.workspaceId, body.campaignId))) return apiError("That campaign no longer exists.", 400);
+    campaignId = body.campaignId;
   }
   const attached = await resolveAttachments(auth.workspaceId, body.attachmentIds);
   if ("error" in attached) return apiError(attached.error!, 400);
@@ -139,6 +148,7 @@ export async function POST(req: NextRequest) {
     fromName: body.fromName?.trim() || undefined,
     replyTo,
     subject,
+    campaignId,
     preheader,
     bodyHtml,
     trackOpens: body.trackOpens !== false,

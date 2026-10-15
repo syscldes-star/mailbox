@@ -5,6 +5,7 @@
 // HTML shell for the public pages.
 
 import jwt from "jsonwebtoken";
+import { createHmac, timingSafeEqual } from "crypto";
 import { NextResponse } from "next/server";
 import { escapeHtml, emailFooterHtml, htmlToText } from "./template";
 import { sendEmail } from "./sender";
@@ -35,6 +36,47 @@ export function verifyConfirmToken(token: string): ConfirmPayload | null {
   } catch {
     return null;
   }
+}
+
+// ---- Signed signup links ----
+//
+// A signup-form button in a bulk email links to the form with the
+// reader's address (?email=) and this short signature (&k=). The form only
+// says "you're already subscribed" when the signature matches, so nobody
+// can find out who is on a list by typing addresses into the URL.
+
+function formEmailSignature(formId: string, email: string): string {
+  return createHmac("sha256", getSecret()).update(`signup:${formId}:${email.toLowerCase()}`).digest("base64url").slice(0, 16);
+}
+
+export function signFormEmail(formId: string, email: string): string {
+  return formEmailSignature(formId, email);
+}
+
+export function verifyFormEmail(formId: string, email: string, signature: string): boolean {
+  if (!signature) return false;
+  const expected = Buffer.from(formEmailSignature(formId, email));
+  const given = Buffer.from(signature);
+  return expected.length === given.length && timingSafeEqual(expected, given);
+}
+
+/** Adds the reader's signature to every signup-form link in a rendered
+ * email that carries their address. */
+export function signSignupLinks(html: string, appBase: string, email: string): string {
+  const prefix = `${appBase.replace(/\/+$/, "")}/api/subscribe/`;
+  return html.replace(/(<a\b[^>]*?\shref\s*=\s*)(["'])(.*?)\2/gi, (whole, start: string, _q: string, raw: string) => {
+    const href = raw.replace(/&amp;/g, "&");
+    if (!href.startsWith(prefix)) return whole;
+    try {
+      const url = new URL(href);
+      const formId = url.pathname.split("/").pop() ?? "";
+      if (!/^[a-f0-9]{24}$/i.test(formId) || (url.searchParams.get("email") ?? "").replace(/ /g, "+").toLowerCase() !== email.toLowerCase()) return whole;
+      url.searchParams.set("k", signFormEmail(formId, email));
+      return `${start}"${url.toString().replace(/&/g, "&amp;").replace(/"/g, "&quot;")}"`;
+    } catch {
+      return whole;
+    }
+  });
 }
 
 // ---- Rate limiting (single long-lived process, so in-memory is enough) ----

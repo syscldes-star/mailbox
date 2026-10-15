@@ -9,7 +9,8 @@
 // isVisualSafe(), and every paste is sanitised. Anything more complex
 // (style blocks, scripts, forms, event handlers) stays in HTML mode.
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import ImageLibrary from "./ImageLibrary";
 import {
   Bold,
   Italic,
@@ -90,6 +91,7 @@ export default function VisualEditor({
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const lastEmitted = useRef<string>("");
+  const [showLibrary, setShowLibrary] = useState(false);
 
   // Only overwrite the DOM when the value changed from outside (template
   // loaded, HTML mode edit) -- never on our own input, or the caret jumps.
@@ -128,14 +130,24 @@ export default function VisualEditor({
     else insertHtml(`<a href="${escapeAttr(url.trim())}">${escapeAttr(url.trim())}</a>`);
   }
 
+  // The library opens in a dialog, which takes focus from the editor, so
+  // the caret position is remembered and restored before inserting.
+  const savedRange = useRef<Range | null>(null);
   function addImage() {
-    const url = window.prompt("Image address (https://…). The image must be hosted online.");
-    if (!url) return;
-    if (!/^https?:\/\//i.test(url.trim())) {
-      window.alert("Image addresses must start with https://");
-      return;
+    const sel = window.getSelection();
+    savedRange.current = sel && sel.rangeCount > 0 && ref.current?.contains(sel.anchorNode) ? sel.getRangeAt(0).cloneRange() : null;
+    setShowLibrary(true);
+  }
+
+  function insertImage(url: string, alt: string) {
+    setShowLibrary(false);
+    ref.current?.focus();
+    const sel = window.getSelection();
+    if (sel && savedRange.current) {
+      sel.removeAllRanges();
+      sel.addRange(savedRange.current);
     }
-    insertHtml(`<img src="${escapeAttr(url.trim())}" alt="" style="max-width:100%;height:auto;" />`);
+    insertHtml(`<img src="${escapeAttr(url)}" alt="${escapeAttr(alt)}" style="max-width:100%;height:auto;" />`);
   }
 
   function addButton() {
@@ -210,6 +222,7 @@ export default function VisualEditor({
         }}
         className="prose-email min-h-[260px] max-w-none bg-white px-4 py-3 text-sm leading-relaxed text-slate-800 outline-none [&_a]:text-indigo-600 [&_a]:underline [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:text-xl [&_h2]:font-bold [&_h3]:text-lg [&_h3]:font-semibold [&_img]:max-w-full [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-6"
       />
+      {showLibrary && <ImageLibrary onPick={insertImage} onClose={() => setShowLibrary(false)} />}
     </div>
   );
 }
