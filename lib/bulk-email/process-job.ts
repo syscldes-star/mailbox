@@ -62,7 +62,12 @@ export function buildMessage(
   // URLs are already filled in; the unsubscribe link is never touched.
   // UTM tags go on first, so the click redirect lands on the tagged URL.
   const isUnsubscribe = (url: string) => url === unsubscribe;
-  const tagged = source.utm ? rewriteLinks(rendered, (url) => addUtmTags(url, source.utm!), isUnsubscribe) : rendered;
+  // Campaign tags are for the sender's own website analytics, so links
+  // into this app (e.g. an inserted signup form) are left untagged --
+  // nothing reads them there, and click tracking already counts them.
+  const appBase = `${source.publicBaseUrl.replace(/\/+$/, "")}/api/`;
+  const skipUtm = (url: string) => isUnsubscribe(url) || url.startsWith(appBase);
+  const tagged = source.utm ? rewriteLinks(rendered, (url) => addUtmTags(url, source.utm!), skipUtm) : rendered;
   const linked = tracking.wrapLink ? rewriteLinks(tagged, tracking.wrapLink, isUnsubscribe) : tagged;
   const html = tracking.openPixel ? withOpenPixel(linked, tracking.openPixel) : linked;
   return {
