@@ -9,7 +9,9 @@ export default function SidebarLogo() {
 
   return (
     <Link
-      href="/dashboard"
+      // This app has no /dashboard (that page is in the main app); its home
+      // is "/", which opens the email panel's first page.
+      href="/"
       className={`flex items-center ${collapsed ? "justify-center px-0" : "gap-3 px-5"
         } py-5 border-b border-slate-800`}
     >
