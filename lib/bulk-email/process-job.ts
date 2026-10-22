@@ -55,9 +55,9 @@ export interface MessageSource {
 export function buildMessage(
   source: MessageSource,
   recipient: { email: string; name?: string; vars?: Record<string, string> },
-  tracking: { openPixel?: string; wrapLink?: (url: string) => string } = {}
+  tracking: { openPixel?: string; wrapLink?: (url: string) => string; jobId?: string } = {}
 ): OutgoingEmail {
-  const unsubscribe = unsubscribeUrl(source.publicBaseUrl, source.workspaceId, recipient.email);
+  const unsubscribe = unsubscribeUrl(source.publicBaseUrl, source.workspaceId, recipient.email, tracking.jobId);
   const vars = { ...(recipient.vars ?? {}), email: recipient.email, name: recipient.name ?? "", unsubscribe_url: unsubscribe };
   const rendered = signSignupLinks(
     renderTemplate(withPreheader(withFooter(source.bodyHtml, source.postalAddress), source.preheader), vars, { html: true }),
@@ -165,6 +165,7 @@ export async function processBulkJob(jobId: string): Promise<void> {
                   ...buildMessage(job, r, {
                     openPixel: job.trackOpens ? openPixelUrl(job.publicBaseUrl, jobId, r.index) : undefined,
                     wrapLink: job.trackClicks ? (url) => clickTrackingUrl(job.publicBaseUrl, jobId, r.index, url) : undefined,
+                    jobId,
                   }),
                   attachments,
                 });

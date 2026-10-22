@@ -22,9 +22,13 @@ export interface JobCounts {
   clicked: number;
   bounced: number;
   complained: number;
+  /** Recipients who unsubscribed using this email's link. */
+  unsubscribed: number;
 }
 
-export const EMPTY_COUNTS: JobCounts = { total: 0, sent: 0, failed: 0, skipped: 0, opened: 0, clicked: 0, bounced: 0, complained: 0 };
+export const EMPTY_COUNTS: JobCounts = {
+  total: 0, sent: 0, failed: 0, skipped: 0, opened: 0, clicked: 0, bounced: 0, complained: 0, unsubscribed: 0,
+};
 
 export interface IBulkEmailJob extends Document {
   workspaceId: string;
@@ -76,6 +80,7 @@ const CountsSchema = new Schema<JobCounts>(
     clicked: { type: Number, default: 0 },
     bounced: { type: Number, default: 0 },
     complained: { type: Number, default: 0 },
+    unsubscribed: { type: Number, default: 0 },
   },
   { _id: false }
 );

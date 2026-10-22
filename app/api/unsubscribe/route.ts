@@ -8,7 +8,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { connectToDatabase } from "@/lib/db/mongodb";
+import mongoose from "mongoose";
 import { EmailSuppression } from "@/lib/models/EmailSuppression";
+import { BulkRecipient } from "@/lib/models/BulkRecipient";
+import { incCounts } from "@/lib/models/BulkEmailJob";
 import { verifyUnsubscribeToken } from "@/lib/bulk-email/unsubscribe";
 import { escapeHtml } from "@/lib/bulk-email/template";
 
@@ -50,6 +53,16 @@ export async function POST(req: NextRequest) {
     { $setOnInsert: { workspaceId: payload.workspaceId, email: payload.email, reason: "unsubscribed" } },
     { upsert: true }
   );
+
+  // Credit the email the link came from (once per person), for the
+  // Overview's "most unsubscribes" ranking.
+  if (payload.jobId && mongoose.isValidObjectId(payload.jobId)) {
+    const marked = await BulkRecipient.updateOne(
+      { jobId: payload.jobId, email: payload.email, unsubscribedAt: null },
+      { $set: { unsubscribedAt: new Date() } }
+    );
+    if (marked.modifiedCount === 1) await incCounts(payload.jobId, { unsubscribed: 1 });
+  }
 
   return page("You're unsubscribed", `<p><strong>${escapeHtml(payload.email)}</strong> won't receive these emails anymore.</p>`);
 }

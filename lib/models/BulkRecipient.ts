@@ -34,6 +34,8 @@ export interface IBulkRecipient {
   clickedAt?: Date;
   lastClickedAt?: Date;
   clickCount?: number;
+  /** When they unsubscribed using this email's link. */
+  unsubscribedAt?: Date;
   /** Distinct destination URLs this recipient clicked. */
   clickedLinks?: string[];
   /** Set by the bounce/complaint sync when Oracle reports a problem
@@ -59,6 +61,7 @@ const BulkRecipientSchema = new Schema<IBulkRecipient>({
   clickedAt: Date,
   lastClickedAt: Date,
   clickCount: Number,
+  unsubscribedAt: Date,
   clickedLinks: { type: [String], default: undefined },
   deliveryIssue: { type: String, enum: ["bounced", "soft_bounced", "complained"] },
   deliveryIssueAt: Date,
@@ -71,5 +74,8 @@ BulkRecipientSchema.index({ jobId: 1, status: 1, index: 1 });
 // Bounce sync and contact profiles look recipients up by address.
 BulkRecipientSchema.index({ email: 1, status: 1 });
 BulkRecipientSchema.index({ workspaceId: 1, email: 1, _id: -1 });
+// Overview's "by activity date" chart: opens and clicks per day.
+BulkRecipientSchema.index({ workspaceId: 1, openedAt: 1 }, { partialFilterExpression: { openedAt: { $exists: true } } });
+BulkRecipientSchema.index({ workspaceId: 1, clickedAt: 1 }, { partialFilterExpression: { clickedAt: { $exists: true } } });
 
 export const BulkRecipient: Model<IBulkRecipient> = emailModel<IBulkRecipient>("BulkRecipient", BulkRecipientSchema);
