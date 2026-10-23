@@ -1781,7 +1781,7 @@ export default function BulkEmailPanel() {
         </div>
       )}
 
-      {tab === "overview" && <OverviewTab />}
+      {tab === "overview" && <OverviewTab onOpenSend={openSendInHistory} />}
       {tab === "campaigns" && (
         <CampaignsTab
           selectedId={openCampaignId}

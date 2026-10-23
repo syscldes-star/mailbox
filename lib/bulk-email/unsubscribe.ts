@@ -10,6 +10,9 @@ interface UnsubscribePayload {
   purpose: "unsubscribe";
   workspaceId: string;
   email: string;
+  /** The send the link came from, so unsubscribes can be counted per
+   * email. Absent in links from before this was added. */
+  jobId?: string;
 }
 
 function getSecret(): string {
@@ -18,22 +21,22 @@ function getSecret(): string {
   return secret;
 }
 
-export function signUnsubscribeToken(workspaceId: string, email: string): string {
-  const payload: UnsubscribePayload = { purpose: "unsubscribe", workspaceId, email: email.toLowerCase() };
+export function signUnsubscribeToken(workspaceId: string, email: string, jobId?: string): string {
+  const payload: UnsubscribePayload = { purpose: "unsubscribe", workspaceId, email: email.toLowerCase(), jobId };
   return jwt.sign(payload, getSecret());
 }
 
-export function verifyUnsubscribeToken(token: string): { workspaceId: string; email: string } | null {
+export function verifyUnsubscribeToken(token: string): { workspaceId: string; email: string; jobId?: string } | null {
   try {
     const payload = jwt.verify(token, getSecret()) as UnsubscribePayload;
     if (payload.purpose !== "unsubscribe" || !payload.workspaceId || !payload.email) return null;
-    return { workspaceId: payload.workspaceId, email: payload.email };
+    return { workspaceId: payload.workspaceId, email: payload.email, jobId: payload.jobId };
   } catch {
     return null;
   }
 }
 
-export function unsubscribeUrl(publicBaseUrl: string, workspaceId: string, email: string): string {
+export function unsubscribeUrl(publicBaseUrl: string, workspaceId: string, email: string, jobId?: string): string {
   const base = publicBaseUrl.replace(/\/+$/, "");
-  return `${base}/api/unsubscribe?t=${encodeURIComponent(signUnsubscribeToken(workspaceId, email))}`;
+  return `${base}/api/unsubscribe?t=${encodeURIComponent(signUnsubscribeToken(workspaceId, email, jobId))}`;
 }
