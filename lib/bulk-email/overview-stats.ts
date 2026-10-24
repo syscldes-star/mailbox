@@ -25,6 +25,11 @@ export const MIN_RANKED_RECIPIENTS = 20;
 
 export interface OverviewOptions {
   workspaceId: string;
+  /** Which sends count (lib/visibility.ts workVisibleTo): the whole
+   * workspace for the owner, a member's own / shared-campaign sends. */
+  jobScope: Record<string, unknown>;
+  /** Which lists count towards list growth (lib/visibility.ts visibleTo). */
+  listScope: Record<string, unknown>;
   days: 30 | 90 | 365;
   campaignId?: string;
   tzOffset: number;
@@ -68,7 +73,7 @@ function totalsOf(jobs: Job[]) {
   };
 }
 
-export async function overviewStats({ workspaceId, days, campaignId, tzOffset }: OverviewOptions) {
+export async function overviewStats({ workspaceId, jobScope, listScope, days, campaignId, tzOffset }: OverviewOptions) {
   const now = Date.now();
   const tz = tzOffset * 60 * 1000;
   // Buckets: one per day for 30 days, one per week otherwise. They end at
@@ -88,7 +93,7 @@ export async function overviewStats({ workspaceId, days, campaignId, tzOffset }:
   const jobFields = "subject createdAt trackOpens trackClicks campaignId counts";
   const loadJobs = (from: number, to: number) =>
     BulkEmailJob.find({
-      workspaceId,
+      ...jobScope,
       ...campaignFilter,
       createdAt: { $gte: new Date(from), $lt: new Date(to) },
       status: { $nin: ["scheduled", "preparing"] },
@@ -129,8 +134,9 @@ export async function overviewStats({ workspaceId, days, campaignId, tzOffset }:
   // Activity date: first opens / first clicks that happened in each bucket,
   // whichever email they came from (older emails opened late count too).
   const recipientScope: Record<string, unknown> = { workspaceId };
-  if (campaignFilter.campaignId) {
-    const ids = await BulkEmailJob.find({ workspaceId, campaignId: campaignFilter.campaignId }).distinct("_id");
+  const scopedToSomeSends = campaignFilter.campaignId || "$or" in jobScope;
+  if (scopedToSomeSends) {
+    const ids = await BulkEmailJob.find({ ...jobScope, ...campaignFilter }).distinct("_id");
     recipientScope.jobId = { $in: ids };
   }
   const activity = async (field: "openedAt" | "clickedAt") =>
@@ -146,7 +152,7 @@ export async function overviewStats({ workspaceId, days, campaignId, tzOffset }:
   const growthFor = async (from: number, to: number) => {
     const [joins, leaves] = await Promise.all([
       ContactList.aggregate<{ _id: { t: string; form?: string } }>([
-        { $match: { workspaceId } },
+        { $match: listScope },
         { $unwind: "$contacts" },
         {
           $match: {

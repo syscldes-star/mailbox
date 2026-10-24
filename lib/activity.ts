@@ -11,7 +11,8 @@ export type WorkAction =
   | "email_campaign_started"
   | "email_template_saved"
   | "email_domain_added"
-  | "email_mailbox_created";
+  | "email_mailbox_created"
+  | "email_shared";
 
 const ActivityLogSchema = new Schema(
   {

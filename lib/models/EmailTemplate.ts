@@ -13,6 +13,9 @@ export interface IEmailTemplate extends Document {
   preheader?: string;
   bodyHtml: string;
   createdBy: string;
+  /** Team members the workspace owner shared this with (user ids). Members
+   * see what they created plus what's shared with them (lib/visibility.ts). */
+  sharedWith: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -25,6 +28,7 @@ const EmailTemplateSchema = new Schema<IEmailTemplate>(
     preheader: String,
     bodyHtml: { type: String, required: true },
     createdBy: { type: String, required: true },
+    sharedWith: { type: [String], default: [] },
   },
   { timestamps: true }
 );

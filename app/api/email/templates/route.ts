@@ -5,6 +5,7 @@
 
 import { NextRequest } from "next/server";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
+import { visibleTo, withCreators } from "@/lib/visibility";
 import { logWork } from "@/lib/activity";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { EmailTemplate } from "@/lib/models/EmailTemplate";
@@ -15,9 +16,11 @@ const MAX_BODY_LENGTH = 500_000;
 export async function GET() {
   const auth = await requireAuth();
   if (!auth) return apiError("Not authenticated.", 401);
-  const templates = await EmailTemplate.find({ workspaceId: auth.workspaceId }).sort({ updatedAt: -1 }).lean();
+  // Owner: every template. Member: their own + ones shared with them.
+  const templates = await withCreators(await EmailTemplate.find(visibleTo(auth)).sort({ updatedAt: -1 }).lean(), auth);
   return apiSuccess({
     templates: templates.map(({ _id, __v, workspaceId: _w, ...rest }) => ({ id: String(_id), ...rest })),
+    isOwner: auth.membership.role === "owner",
     canManage: hasMinimumRole(auth.membership.role, MIN_SEND_ROLE),
   });
 }

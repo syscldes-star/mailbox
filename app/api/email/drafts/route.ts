@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
   if (!hasMinimumRole(auth.membership.role, MIN_SEND_ROLE)) {
     return apiError("Only managers, admins, and owners can save drafts.", 403);
   }
-  const result = await cleanDraftInput(auth.workspaceId, (await req.json()) as DraftInput);
+  const result = await cleanDraftInput(auth, (await req.json()) as DraftInput);
   if ("error" in result) return apiError(result.error!, 400);
 
   const draft = await EmailDraft.create({ ...result.value, workspaceId: auth.workspaceId, createdBy: auth.userId });

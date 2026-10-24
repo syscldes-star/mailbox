@@ -7,6 +7,7 @@
 import { NextRequest } from "next/server";
 import mongoose from "mongoose";
 import { requireAuth } from "@/lib/api/requireAuth";
+import { visibleTo } from "@/lib/visibility";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { SignupForm } from "@/lib/models/SignupForm";
 import { ContactList } from "@/lib/models/ContactList";
@@ -21,7 +22,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   const { id } = await params;
   if (!mongoose.isValidObjectId(id)) return apiError("Form not found.", 404);
 
-  const form = await SignupForm.findOne({ _id: id, workspaceId: auth.workspaceId }).select("name listId").lean();
+  const form = await SignupForm.findOne({ _id: id, ...visibleTo(auth) }).select("name listId").lean();
   if (!form) return apiError("Form not found.", 404);
   if (!mongoose.isValidObjectId(form.listId)) return apiSuccess({ signups: [], total: 0 });
 

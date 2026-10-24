@@ -6,6 +6,7 @@
 
 import { NextRequest } from "next/server";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
+import { visibleTo, workVisibleTo } from "@/lib/visibility";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { BulkRecipient } from "@/lib/models/BulkRecipient";
 import { BulkEmailJob } from "@/lib/models/BulkEmailJob";
@@ -24,14 +25,20 @@ export async function GET(req: NextRequest) {
   if (!isValidEmail(email)) return apiError("Enter a valid email address.", 400);
   const workspaceId = auth.workspaceId;
 
+  // A member only sees this contact's history from sends they can see,
+  // and the lists they can see; the owner sees everything.
+  const jobScope = await workVisibleTo(auth);
+  const recipientFilter: Record<string, unknown> = { workspaceId, email };
+  if ("$or" in jobScope) recipientFilter.jobId = { $in: await BulkEmailJob.find(jobScope).distinct("_id") };
+
   const [received, suppression, lists] = await Promise.all([
-    BulkRecipient.find({ workspaceId, email })
+    BulkRecipient.find(recipientFilter)
       .sort({ _id: -1 })
       .limit(MAX_HISTORY)
       .select("jobId name status error sentAt openedAt openCount clickedAt clickCount clickedLinks deliveryIssue")
       .lean(),
     EmailSuppression.findOne({ workspaceId, email }).select("reason note createdAt").lean(),
-    ContactList.find({ workspaceId, "contacts.email": email }, { name: 1, contacts: { $elemMatch: { email } } }).lean(),
+    ContactList.find({ ...visibleTo(auth), "contacts.email": email }, { name: 1, contacts: { $elemMatch: { email } } }).lean(),
   ]);
 
   const jobs = new Map(
