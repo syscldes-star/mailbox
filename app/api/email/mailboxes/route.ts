@@ -6,6 +6,7 @@
 
 import { NextRequest } from "next/server";
 import { requireAuth } from "@/lib/api/requireAuth";
+import { logWork } from "@/lib/activity";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import {
   mailcowListMailboxes,
@@ -59,6 +60,7 @@ export async function POST(req: NextRequest) {
     password,
     fullName: fullName || `${localPart}@${domain}`,
   });
+  await logWork(auth, "email_mailbox_created", `${localPart}@${domain}`);
   return apiSuccess(result);
 }
 

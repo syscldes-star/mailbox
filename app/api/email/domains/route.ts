@@ -7,6 +7,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { waitUntil } from "@vercel/functions";
 import { requireAuth } from "@/lib/api/requireAuth";
+import { logWork } from "@/lib/activity";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { provisionDomainEmail } from "@/lib/email-provisioning/provision-domain";
 import { assertDomainOwnedByWorkspace } from "@/lib/email-provisioning/domain-ownership";
@@ -67,6 +68,8 @@ export async function POST(req: NextRequest) {
       saveState
     )
   );
+
+  await logWork(auth, "email_domain_added", domain);
 
   return apiSuccess({ status: "provisioning_started", domain });
 }

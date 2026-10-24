@@ -10,6 +10,7 @@
 import { NextRequest } from "next/server";
 import mongoose from "mongoose";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
+import { logWork } from "@/lib/activity";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { BulkEmailJob } from "@/lib/models/BulkEmailJob";
 import { User } from "@/lib/models/User";
@@ -160,6 +161,8 @@ export async function POST(req: NextRequest) {
     status: "preparing",
     scheduledAt,
   });
+
+  await logWork(auth, "email_campaign_created", subject);
 
   return apiSuccess({ id: String(job._id) }, "Send created -- upload recipients, then start it.", 201);
 }

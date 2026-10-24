@@ -13,6 +13,7 @@
 import { NextRequest } from "next/server";
 import mongoose from "mongoose";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
+import { logWork } from "@/lib/activity";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { BulkEmailJob } from "@/lib/models/BulkEmailJob";
 import { BulkRecipient } from "@/lib/models/BulkRecipient";
@@ -88,7 +89,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const { action } = await req.json();
 
   if (action === "start") {
-    const job = await BulkEmailJob.findOne({ _id: id, workspaceId: auth.workspaceId }).select("status scheduledAt counts").lean();
+    const job = await BulkEmailJob.findOne({ _id: id, workspaceId: auth.workspaceId }).select("status scheduledAt counts subject").lean();
     if (!job) return apiError("Bulk send not found.", 404);
     if (job.status !== "preparing") return apiError("That send has already been started.", 409);
     if (job.counts.total === 0) return apiError("Add at least one valid recipient.", 400);
@@ -99,6 +100,11 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     const flipped = await BulkEmailJob.updateOne({ _id: id, status: "preparing" }, { $set: { status: next } });
     if (flipped.modifiedCount !== 1) return apiError("That send has already been started.", 409);
     if (next === "sending") startBulkJob(id);
+    await logWork(
+      auth,
+      "email_campaign_started",
+      `${job.subject} · ${job.counts.total} recipients${job.scheduledAt ? ` · scheduled for ${job.scheduledAt.toISOString()}` : ""}`
+    );
     return apiSuccess(
       { id, status: next, total: job.counts.total, scheduledAt: job.scheduledAt },
       next === "scheduled" ? "Bulk send scheduled." : "Bulk send started."

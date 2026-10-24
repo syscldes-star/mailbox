@@ -5,6 +5,7 @@
 
 import { NextRequest } from "next/server";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
+import { logWork } from "@/lib/activity";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { EmailTemplate } from "@/lib/models/EmailTemplate";
 import { MIN_SEND_ROLE } from "@/lib/bulk-email/access";
@@ -41,5 +42,7 @@ export async function POST(req: NextRequest) {
     bodyHtml: String(bodyHtml),
     createdBy: auth.userId,
   });
+  await logWork(auth, "email_template_saved", trimmedName);
+
   return apiSuccess({ id: String(template._id) }, "Template saved.", 201);
 }

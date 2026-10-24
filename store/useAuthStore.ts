@@ -42,6 +42,9 @@ interface AuthState {
   user: AuthUser | null;
   workspace: AuthWorkspace | null;
   role: string | null;
+  /** Signed in, but the Email panel isn't theirs (or their workspace is
+   * suspended) -- RequireAuth sends them back to main. */
+  accessDenied: boolean;
   isLoading: boolean;
 
   checkSession: () => Promise<void>;
@@ -52,15 +55,18 @@ export const useAuthStore = create<AuthState>()((set) => ({
   user: null,
   workspace: null,
   role: null,
+  accessDenied: false,
   isLoading: true,
 
   checkSession: async () => {
     try {
       const data = await apiGet<MeResponse>("/api/auth/me");
-      set({ user: data.user, workspace: data.workspace, role: data.role, isLoading: false });
-    } catch {
-      // Not logged in is a normal outcome here, not an error to surface.
-      set({ user: null, workspace: null, role: null, isLoading: false });
+      set({ user: data.user, workspace: data.workspace, role: data.role, accessDenied: false, isLoading: false });
+    } catch (err) {
+      // Not logged in (401) or no Email panel (403) -- normal outcomes
+      // here, not errors to surface.
+      const accessDenied = err instanceof ApiError && err.status === 403;
+      set({ user: null, workspace: null, role: null, accessDenied, isLoading: false });
     }
   },
 
