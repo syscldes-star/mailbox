@@ -22,6 +22,7 @@ import {
 import { apiDelete, apiGet, apiPost, apiPut, ApiError } from "@/lib/api/client";
 import { cardClass, formatDate, inputClass, labelClass, primaryButton, secondaryButton } from "./ui";
 import { downloadReportCsv, openReportWindow, writeReport, type ReportData } from "./report";
+import { CreatedBy, ShareButton, type CreatorInfo } from "./Sharing";
 
 interface Counts {
   total: number;
@@ -43,6 +44,8 @@ interface CampaignRow extends Stats {
   id: string;
   name: string;
   description: string;
+  createdByInfo?: CreatorInfo;
+  sharedWith?: string[];
   createdAt: string;
   lastActivityAt?: string;
 }
@@ -112,6 +115,7 @@ export default function CampaignsTab({
 }) {
   const [campaigns, setCampaigns] = useState<CampaignRow[] | null>(null);
   const [canManage, setCanManage] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
   const [detail, setDetail] = useState<CampaignDetail | null>(null);
   const [creating, setCreating] = useState<{ name: string; description: string } | null>(null);
   const [editing, setEditing] = useState<{ name: string; description: string } | null>(null);
@@ -121,9 +125,10 @@ export default function CampaignsTab({
 
   async function loadList() {
     try {
-      const res = await apiGet<{ campaigns: CampaignRow[]; canManage: boolean }>("/api/email/campaigns");
+      const res = await apiGet<{ campaigns: CampaignRow[]; canManage: boolean; isOwner?: boolean }>("/api/email/campaigns");
       setCampaigns(res.campaigns);
       setCanManage(res.canManage);
+      setIsOwner(!!res.isOwner);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load campaigns.");
     }
@@ -495,6 +500,11 @@ export default function CampaignsTab({
                 <th className="px-4 py-3 font-medium">Open rate</th>
                 <th className="px-4 py-3 font-medium">Click rate</th>
                 <th className="px-4 py-3 font-medium">Last activity</th>
+                {isOwner && (
+                  <th className="px-4 py-3 font-medium">
+                    <span className="sr-only">Share</span>
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -503,12 +513,25 @@ export default function CampaignsTab({
                   <td className="px-4 py-3">
                     <p className="font-medium text-slate-900">{c.name}</p>
                     {c.description && <p className="max-w-[280px] truncate text-xs text-slate-400">{c.description}</p>}
+                    <CreatedBy info={c.createdByInfo} sharedCount={c.sharedWith?.length} />
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-600">{emailSummary(c.emails)}</td>
                   <td className="px-4 py-3 text-slate-600">{c.counts.sent.toLocaleString()}</td>
                   <td className="px-4 py-3 text-slate-600">{pct(c.counts.opened, c.counts.sent)}</td>
                   <td className="px-4 py-3 text-slate-600">{pct(c.counts.clicked, c.counts.sent)}</td>
                   <td className="px-4 py-3 text-xs text-slate-500">{formatDate(c.lastActivityAt)}</td>
+                  {isOwner && (
+                    <td className="px-4 py-3 text-right">
+                      <ShareButton
+                        kind="campaigns"
+                        id={c.id}
+                        name={c.name}
+                        sharedWith={c.sharedWith ?? []}
+                        creatorId={c.createdByInfo?.id ?? null}
+                        onSaved={(ids) => setCampaigns((list) => list && list.map((x) => (x.id === c.id ? { ...x, sharedWith: ids } : x)))}
+                      />
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

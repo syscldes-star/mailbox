@@ -10,6 +10,8 @@
 import { NextRequest } from "next/server";
 import mongoose from "mongoose";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
+import { workVisibleTo } from "@/lib/visibility";
+import { logWork } from "@/lib/activity";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { BulkEmailJob } from "@/lib/models/BulkEmailJob";
 import { User } from "@/lib/models/User";
@@ -30,7 +32,8 @@ export async function GET() {
   const [senders, settings, jobs] = await Promise.all([
     loadSenderDomains(auth.workspaceId),
     getEmailSettings(auth.workspaceId),
-    BulkEmailJob.find({ workspaceId: auth.workspaceId, status: { $ne: "preparing" } })
+    // Owner: every send. Member: their own + sends in campaigns they can see.
+    BulkEmailJob.find({ ...(await workVisibleTo(auth)), status: { $ne: "preparing" } })
       .sort({ createdAt: -1 })
       .limit(50)
       .select("fromDomain fromLocalPart fromName subject campaignId status error createdAt completedAt scheduledAt counts trackOpens trackClicks createdBy")
@@ -134,7 +137,7 @@ export async function POST(req: NextRequest) {
   const settings = await getEmailSettings(auth.workspaceId);
   let campaignId: string | undefined;
   if (body.campaignId) {
-    if (!(await findCampaign(auth.workspaceId, body.campaignId))) return apiError("That campaign no longer exists.", 400);
+    if (!(await findCampaign(auth, body.campaignId))) return apiError("That campaign no longer exists.", 400);
     campaignId = body.campaignId;
   }
   const attached = await resolveAttachments(auth.workspaceId, body.attachmentIds);
@@ -160,6 +163,8 @@ export async function POST(req: NextRequest) {
     status: "preparing",
     scheduledAt,
   });
+
+  await logWork(auth, "email_campaign_created", subject);
 
   return apiSuccess({ id: String(job._id) }, "Send created -- upload recipients, then start it.", 201);
 }

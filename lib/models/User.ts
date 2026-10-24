@@ -7,6 +7,7 @@ export interface IUser extends Document {
   lastName: string;
   avatarUrl?: string;
   activeWorkspaceId?: mongoose.Types.ObjectId;
+  sessionVersion?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -35,6 +36,9 @@ const UserSchema = new Schema<IUser>(
     // workspaceId from this rather than requiring the client to pass it
     // on every call, since a user's active workspace changes rarely.
     activeWorkspaceId: { type: Schema.Types.ObjectId, ref: "Workspace" },
+    // Owned by main: bumped on a password change to sign the user out
+    // everywhere. Read-only here.
+    sessionVersion: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

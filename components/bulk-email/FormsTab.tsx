@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Plus, Copy, Check, ExternalLink, Pencil, Trash2, FormInput, Loader2, Users, RefreshCw } from "lucide-react";
 import { apiDelete, apiGet, apiPost, apiPut, ApiError } from "@/lib/api/client";
 import { cardClass, inputClass, labelClass, primaryButton, secondaryButton } from "./ui";
+import { CreatedBy, ShareButton, type CreatorInfo } from "./Sharing";
 
 interface SignupFormRow {
   id: string;
@@ -23,6 +24,8 @@ interface SignupFormRow {
   redirectUrl?: string;
   active: boolean;
   signups: number;
+  createdByInfo?: CreatorInfo;
+  sharedWith?: string[];
 }
 
 interface Draft {
@@ -140,6 +143,7 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
   const [lists, setLists] = useState<{ id: string; name: string }[]>([]);
   const [baseUrl, setBaseUrl] = useState("");
   const [canManage, setCanManage] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
   const [editing, setEditing] = useState<{ id: string | null; draft: Draft } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -151,12 +155,13 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
   async function load() {
     try {
       const [f, l] = await Promise.all([
-        apiGet<{ forms: SignupFormRow[]; baseUrl: string; canManage: boolean }>("/api/email/forms"),
+        apiGet<{ forms: SignupFormRow[]; baseUrl: string; canManage: boolean; isOwner?: boolean }>("/api/email/forms"),
         apiGet<{ lists: { id: string; name: string }[] }>("/api/email/lists"),
       ]);
       setForms(f.forms);
       setBaseUrl(f.baseUrl.replace(/\/+$/, ""));
       setCanManage(f.canManage);
+      setIsOwner(!!f.isOwner);
       setLists(l.lists);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load signup forms.");
@@ -372,8 +377,19 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
                     <p className="mt-1 text-xs text-slate-500">
                       Adds to <strong>{f.listName}</strong> · {f.signups.toLocaleString()} confirmed signup{f.signups === 1 ? "" : "s"}
                     </p>
+                    <CreatedBy info={f.createdByInfo} sharedCount={f.sharedWith?.length} />
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    {isOwner && (
+                      <ShareButton
+                        kind="forms"
+                        id={f.id}
+                        name={f.name}
+                        sharedWith={f.sharedWith ?? []}
+                        creatorId={f.createdByInfo?.id ?? null}
+                        onSaved={(ids) => setForms((list) => list && list.map((x) => (x.id === f.id ? { ...x, sharedWith: ids } : x)))}
+                      />
+                    )}
                     <a href={url} target="_blank" rel="noreferrer" className={secondaryButton}>
                       <ExternalLink size={13} /> Open form
                     </a>
