@@ -4,7 +4,7 @@
 
 import mongoose from "mongoose";
 import { ContactList } from "../models/ContactList";
-import { LOCAL_PART_PATTERN, loadSenderDomains } from "./access";
+import { LOCAL_PART_PATTERN, senderProblem } from "./access";
 
 export interface FormInput {
   name?: string;
@@ -64,8 +64,8 @@ export async function validateFormInput(
     const domain = str(input.fromDomain, 253).toLowerCase();
     const local = str(input.fromLocalPart, 64).toLowerCase();
     if (!domain || !local || !LOCAL_PART_PATTERN.test(local)) return { error: "Enter a valid sender address for the confirmation email." };
-    const senders = await loadSenderDomains(workspaceId);
-    if (!senders.some((s) => s.domain === domain)) return { error: "That domain isn't ready to send from yet." };
+    const problem = await senderProblem(workspaceId, domain, local);
+    if (problem) return { error: problem };
     out.fromDomain = domain;
     out.fromLocalPart = local;
   }

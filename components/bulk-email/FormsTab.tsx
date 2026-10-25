@@ -138,7 +138,9 @@ function SignupsPanel({ formId, listName }: { formId: string; listName: string }
   );
 }
 
-export default function FormsTab({ senders }: { senders: { domain: string; defaultLocalPart: string }[] }) {
+export default function FormsTab({ senders }: { senders: { domain: string; defaultLocalPart: string; mailboxes: string[] | null }[] }) {
+  // Confirmation emails, like all email, can only come from a webmail mailbox.
+  const fromOptions = senders.flatMap((s) => (s.mailboxes ?? []).map((m) => ({ local: m, domain: s.domain })));
   const [forms, setForms] = useState<SignupFormRow[] | null>(null);
   const [lists, setLists] = useState<{ id: string; name: string }[]>([]);
   const [baseUrl, setBaseUrl] = useState("");
@@ -179,8 +181,8 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
       draft: {
         name: "",
         listId: lists[0]?.id ?? "",
-        fromDomain: senders[0]?.domain ?? "",
-        fromLocalPart: senders[0]?.defaultLocalPart ?? "",
+        fromDomain: fromOptions[0]?.domain ?? "",
+        fromLocalPart: fromOptions[0]?.local ?? "",
         fromName: "",
         heading: "Join our newsletter",
         description: "",
@@ -257,7 +259,7 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
           People sign up on a form, confirm by email, and are then added to a list -- proof they agreed to hear from you.
         </p>
         {canManage && !editing && (
-          <button onClick={startNew} disabled={lists.length === 0 || senders.length === 0} className={primaryButton}>
+          <button onClick={startNew} disabled={lists.length === 0 || fromOptions.length === 0} className={primaryButton}>
             <Plus size={15} /> New form
           </button>
         )}
@@ -311,17 +313,27 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
             </div>
             <div>
               <label className={labelClass}>Confirmation email from</label>
-              <div className="flex items-center gap-1">
-                <input value={editing.draft.fromLocalPart} onChange={(e) => set({ fromLocalPart: e.target.value })} className={inputClass} />
-                <span className="text-sm text-slate-400">@</span>
-                <select value={editing.draft.fromDomain} onChange={(e) => set({ fromDomain: e.target.value })} className={inputClass}>
-                  {senders.map((s) => (
-                    <option key={s.domain} value={s.domain}>
-                      {s.domain}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {(() => {
+                const current = `${editing.draft.fromLocalPart}@${editing.draft.fromDomain}`;
+                const valid = fromOptions.some((o) => `${o.local}@${o.domain}` === current);
+                return (
+                  <select
+                    value={valid ? current : ""}
+                    onChange={(e) => {
+                      const [local, domain] = e.target.value.split("@");
+                      set({ fromLocalPart: local ?? "", fromDomain: domain ?? "" });
+                    }}
+                    className={inputClass}
+                  >
+                    {!valid && <option value="">{editing.draft.fromLocalPart ? `${current} isn't a mailbox -- pick one` : "Pick a mailbox…"}</option>}
+                    {fromOptions.map((o) => (
+                      <option key={`${o.local}@${o.domain}`} value={`${o.local}@${o.domain}`}>
+                        {o.local}@{o.domain}
+                      </option>
+                    ))}
+                  </select>
+                );
+              })()}
             </div>
             <div>
               <label className={labelClass}>Sender name (optional)</label>

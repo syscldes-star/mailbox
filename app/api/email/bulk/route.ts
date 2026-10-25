@@ -21,7 +21,7 @@ import { getEmailSettings } from "@/lib/bulk-email/settings";
 import { resolveAttachments } from "@/lib/bulk-email/attachments";
 import { findCampaign } from "@/lib/bulk-email/campaigns";
 import { Campaign } from "@/lib/models/Campaign";
-import { LOCAL_PART_PATTERN, MIN_SEND_ROLE, loadSenderDomains, publicBaseUrl } from "@/lib/bulk-email/access";
+import { LOCAL_PART_PATTERN, MIN_SEND_ROLE, loadSenderDomains, publicBaseUrl, senderProblem } from "@/lib/bulk-email/access";
 
 export async function GET() {
   const auth = await requireAuth();
@@ -128,10 +128,8 @@ export async function POST(req: NextRequest) {
     return apiError("Reply-to must be a valid email address.", 400);
   }
 
-  const senders = await loadSenderDomains(auth.workspaceId);
-  if (!senders.some((s) => s.domain === fromDomain)) {
-    return apiError("That domain isn't ready to send from yet (it needs an active approved sender).", 403);
-  }
+  const problem = await senderProblem(auth.workspaceId, fromDomain, fromLocalPart);
+  if (problem) return apiError(problem, 403);
 
   // Optional: added to the footer when set.
   const settings = await getEmailSettings(auth.workspaceId);

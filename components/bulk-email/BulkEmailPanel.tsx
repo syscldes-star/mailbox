@@ -68,6 +68,9 @@ import VisualEditor, { insertHtmlAtCaret, insertTextAtCaret, isVisualSafe } from
 interface SenderDomain {
   domain: string;
   defaultLocalPart: string;
+  /** Webmail mailboxes on the domain -- the only From addresses allowed.
+   * null if they couldn't be loaded. */
+  mailboxes: string[] | null;
 }
 
 interface JobSummary {
@@ -335,10 +338,12 @@ export default function BulkEmailPanel() {
       const next = await apiGet<ListResponse>("/api/email/bulk");
       setData(next);
       setLoadError(null);
-      if (!senderDefaulted.current && next.senders.length > 0) {
+      // Default to the first real mailbox (the domain's default one if it exists).
+      const first = next.senders.find((s) => s.mailboxes?.length);
+      if (!senderDefaulted.current && first) {
         senderDefaulted.current = true;
-        setFromDomain(next.senders[0].domain);
-        setFromLocalPart(next.senders[0].defaultLocalPart);
+        setFromDomain(first.domain);
+        setFromLocalPart(first.mailboxes!.includes(first.defaultLocalPart) ? first.defaultLocalPart : first.mailboxes![0]);
       }
     } catch (err) {
       setLoadError(err instanceof ApiError ? err.message : "Failed to load bulk email.");
@@ -604,6 +609,11 @@ export default function BulkEmailPanel() {
   const tooMany = parsed.recipients.length > MAX_RECIPIENTS_PER_JOB;
   const canSend = data?.canSend ?? false;
   const noSenders = data !== null && data.senders.length === 0;
+  /** Every address that can be picked as From: one per webmail mailbox. */
+  const fromOptions = (data?.senders ?? []).flatMap((s) => (s.mailboxes ?? []).map((m) => `${m}@${s.domain}`));
+  const noMailboxes = data !== null && !noSenders && fromOptions.length === 0;
+  const fromAddress = fromLocalPart && fromDomain ? `${fromLocalPart}@${fromDomain}` : "";
+  const fromIsMailbox = fromOptions.includes(fromAddress);
   const visualSafe = isVisualSafe(bodyHtml);
   const baseFindings = useMemo(
     () =>
@@ -892,8 +902,7 @@ export default function BulkEmailPanel() {
   }
 
   const formValid =
-    !!fromDomain &&
-    !!fromLocalPart.trim() &&
+    fromIsMailbox &&
     !!subject.trim() &&
     !!bodyHtml.trim() &&
     parsed.recipients.length > 0 &&
@@ -925,6 +934,16 @@ export default function BulkEmailPanel() {
               <AlertTriangle size={16} className="mt-0.5 shrink-0" />
               No domain is ready to send from yet. A domain can send once its &quot;Approved sender&quot; step is
               complete on the Domains page.
+            </div>
+          )}
+          {noMailboxes && (
+            <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+              <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+              <span>
+                Emails can only be sent from a webmail mailbox, so replies reach a real inbox -- and this workspace has none yet
+                {data?.senders.some((s) => s.mailboxes === null) ? " (or they couldn't be loaded -- try refreshing)" : ""}. Create one
+                under Mailbox → Mailboxes.
+              </span>
             </div>
           )}
           {data && !canSend && (
@@ -1021,27 +1040,26 @@ export default function BulkEmailPanel() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className={labelClass}>From address</label>
-                <div className="flex items-center gap-1">
-                  <input
-                    value={fromLocalPart}
-                    onChange={(e) => setFromLocalPart(e.target.value)}
-                    placeholder="newsletter"
-                    className={inputClass}
-                  />
-                  <span className="text-sm text-slate-400">@</span>
-                  <select
-                    value={fromDomain}
-                    onChange={(e) => setFromDomain(e.target.value)}
-                    className={inputClass}
-                    disabled={noSenders}
-                  >
-                    {data?.senders.map((s) => (
-                      <option key={s.domain} value={s.domain}>
-                        {s.domain}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <select
+                  value={fromIsMailbox ? fromAddress : ""}
+                  onChange={(e) => {
+                    const [local, dom] = e.target.value.split("@");
+                    setFromLocalPart(local ?? "");
+                    setFromDomain(dom ?? "");
+                  }}
+                  className={inputClass}
+                  disabled={fromOptions.length === 0}
+                >
+                  {!fromIsMailbox && (
+                    <option value="">{fromAddress ? `${fromAddress} isn't a mailbox -- pick one` : "Pick a mailbox…"}</option>
+                  )}
+                  {fromOptions.map((a) => (
+                    <option key={a} value={a}>
+                      {a}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-xs text-slate-400">Only your webmail mailboxes can send, so replies always reach a real inbox.</p>
                 {fromDomain && (
                   <div className="mt-2">
                     <DomainHealth domain={fromDomain} compact />

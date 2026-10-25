@@ -12,7 +12,7 @@ import { buildMessage } from "@/lib/bulk-email/process-job";
 import { sendEmail } from "@/lib/bulk-email/sender";
 import { getEmailSettings } from "@/lib/bulk-email/settings";
 import { loadAttachmentData, resolveAttachments } from "@/lib/bulk-email/attachments";
-import { LOCAL_PART_PATTERN, MIN_SEND_ROLE, loadSenderDomains, publicBaseUrl } from "@/lib/bulk-email/access";
+import { LOCAL_PART_PATTERN, MIN_SEND_ROLE, publicBaseUrl, senderProblem } from "@/lib/bulk-email/access";
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
@@ -33,10 +33,8 @@ export async function POST(req: NextRequest) {
   if (!LOCAL_PART_PATTERN.test(localPart)) return apiError("From address contains invalid characters.", 400);
   if (replyTo && !isValidEmail(replyTo)) return apiError("Reply-to must be a valid email address.", 400);
 
-  const senders = await loadSenderDomains(auth.workspaceId);
-  if (!senders.some((s) => s.domain === domain)) {
-    return apiError("That domain isn't ready to send from yet (it needs an active approved sender).", 403);
-  }
+  const problem = await senderProblem(auth.workspaceId, domain, localPart);
+  if (problem) return apiError(problem, 403);
 
   const attached = await resolveAttachments(auth.workspaceId, attachmentIds);
   if ("error" in attached) return apiError(attached.error!, 400);
