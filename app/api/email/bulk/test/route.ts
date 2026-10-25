@@ -66,7 +66,9 @@ export async function POST(req: NextRequest) {
   );
 
   try {
-    const result = await sendEmail({ ...message, attachments: await loadAttachmentData(attached.attachments!.map((a) => a.id)) });
+    // Address the test to just the test inbox -- the sample's name fills
+    // {{name}} in the body, but showing "To: Alex <you@...>" is confusing.
+    const result = await sendEmail({ ...message, to: { email: to }, attachments: await loadAttachmentData(attached.attachments!.map((a) => a.id)) });
     if (result.suppressed) {
       return apiError(`${to} is on Oracle's suppression list (a prior bounce or complaint), so it wasn't delivered.`, 409);
     }

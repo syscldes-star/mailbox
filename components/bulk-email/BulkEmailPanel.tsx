@@ -59,6 +59,7 @@ import CampaignsTab from "@/components/bulk-email/CampaignsTab";
 import EngagementTab from "@/components/bulk-email/EngagementTab";
 import ClickMapModal from "@/components/bulk-email/ClickMap";
 import ImageLibrary from "@/components/bulk-email/ImageLibrary";
+import { finishInsertedImages, imageHtml, type ImageSize } from "@/components/bulk-email/image-size";
 import { downloadReportCsv, openReportWindow, writeReport } from "@/components/bulk-email/report";
 import SubscribersTab from "@/components/bulk-email/SubscribersTab";
 import OverviewTab from "@/components/bulk-email/OverviewTab";
@@ -307,6 +308,8 @@ export default function BulkEmailPanel() {
   const [savingDraft, setSavingDraft] = useState(false);
   const [openCampaignId, setOpenCampaignId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [oversizeFile, setOversizeFile] = useState<File | null>(null);
+  const [hosting, setHosting] = useState<{ name: string; done: number } | null>(null);
   const attachInput = useRef<HTMLInputElement>(null);
   const [profileEmail, setProfileEmail] = useState<string | null>(null);
   const [linkResults, setLinkResults] = useState<{ url: string; ok: boolean; status?: number; error?: string }[] | null>(null);
@@ -530,7 +533,15 @@ export default function BulkEmailPanel() {
     setUploading(true);
     setComposeError(null);
     try {
+      let used = attachmentsBytes;
       for (const file of Array.from(files)) {
+        // Too big to attach (Oracle limits the whole email): offer to host
+        // it and link to it instead.
+        if (used + file.size > MAX_ATTACHMENTS_BYTES) {
+          setOversizeFile(file);
+          continue;
+        }
+        used += file.size;
         const form = new FormData();
         form.append("file", file);
         const added = await apiUpload<DraftAttachment>("/api/email/attachments", form);
@@ -541,6 +552,37 @@ export default function BulkEmailPanel() {
     } finally {
       setUploading(false);
       if (attachInput.current) attachInput.current.value = "";
+    }
+  }
+
+  /** Uploads a file in pieces (each under the server's request limit),
+   * then inserts a Download button linking to it. */
+  async function hostFileAsLink(file: File) {
+    setHosting({ name: file.name, done: 0 });
+    setComposeError(null);
+    try {
+      const started = await apiPost<{ id: string; chunkSize: number; chunks: number }>("/api/email/files", { filename: file.name, size: file.size });
+      for (let n = 0; n < started.chunks; n++) {
+        const piece = file.slice(n * started.chunkSize, (n + 1) * started.chunkSize);
+        const res = await fetch(`/api/email/files/${started.id}?n=${n}`, { method: "PUT", body: piece, credentials: "include" });
+        if (!res.ok) {
+          const msg = await res.json().then((j) => j?.message).catch(() => null);
+          throw new ApiError(msg ?? `Upload failed (HTTP ${res.status}).`, res.status, "/api/email/files", "PUT");
+        }
+        setHosting({ name: file.name, done: Math.round(((n + 1) / started.chunks) * 100) });
+      }
+      const done = await apiPost<{ url: string; filename: string; size: number }>(`/api/email/files/${started.id}`, { action: "complete" });
+      const label = `Download ${done.filename} (${(done.size / 1048576).toFixed(1)} MB)`;
+      const html =
+        `<p><a href="${escapeHtml(done.url)}" style="display:inline-block;background:#4f46e5;color:#ffffff;padding:12px 22px;` +
+        `border-radius:6px;text-decoration:none;font-weight:600;font-family:sans-serif;">${escapeHtml(label)}</a></p>`;
+      if (!(bodyView === "visual" && insertHtmlAtCaret(visualEditorEl.current, html))) setBodyHtml((b) => b + html);
+      setOversizeFile(null);
+      setComposeNotice(`Added a “${label}” button to the email. Clicks on it are tracked like any link.`);
+    } catch (err) {
+      setComposeError(err instanceof ApiError ? err.message : "Couldn't upload the file.");
+    } finally {
+      setHosting(null);
     }
   }
 
@@ -704,12 +746,14 @@ export default function BulkEmailPanel() {
     if (bodyView === "preview") setBodyView(visualSafe ? "visual" : "html");
   }
 
-  function insertLibraryImage(url: string, alt: string) {
+  function insertLibraryImage(url: string, alt: string, size: ImageSize) {
     setShowImageLibrary(false);
-    const esc = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-    const html = `<p><img src="${esc(url)}" alt="${esc(alt)}" style="max-width:100%;height:auto;" /></p>`;
-    if (bodyView === "visual" && insertHtmlAtCaret(visualEditorEl.current, html)) return;
-    setBodyHtml((b) => b + html);
+    if (bodyView === "visual" && insertHtmlAtCaret(visualEditorEl.current, `<p>${imageHtml(url, alt, size, true)}</p>`)) {
+      finishInsertedImages(visualEditorEl.current);
+      visualEditorEl.current?.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
+    setBodyHtml((b) => b + `<p>${imageHtml(url, alt, size)}</p>`);
     if (bodyView === "preview") setBodyView(visualSafe ? "visual" : "html");
   }
 
@@ -1282,7 +1326,9 @@ export default function BulkEmailPanel() {
               </div>
 
               <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                <span className="text-slate-500">Merge tags:</span>
+                <span className="text-slate-500" title="Add a fallback for empty values: {{name|Professional}} shows “Professional” when a contact has no name.">
+                  Merge tags <span className="text-slate-400">(fallback: {"{{name|Friend}}"})</span>:
+                </span>
                 {availableTags.map((tag) => (
                   <button
                     key={tag}
@@ -1391,7 +1437,42 @@ export default function BulkEmailPanel() {
                     ))}
                   </ul>
                 )}
-                <p className="mt-1 text-xs text-slate-400">PDF, images, Office files, CSV, TXT or .ics -- up to 5 files.</p>
+                <p className="mt-1 text-xs text-slate-400">
+                  PDF, images, Office files, CSV, TXT or .ics -- up to 5 files, {(MAX_ATTACHMENTS_BYTES / 1048576).toFixed(1)} MB in total.
+                  Bigger files can be shared as a Download button instead.
+                </p>
+                {oversizeFile && !hosting && (
+                  <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                    <p>
+                      <strong>{oversizeFile.name}</strong> is {(oversizeFile.size / 1048576).toFixed(1)} MB -- too big to attach. Email
+                      services (Oracle here) limit the whole email to a few MB, so attachments can total at most{" "}
+                      {(MAX_ATTACHMENTS_BYTES / 1048576).toFixed(1)} MB. Big attachments also often land emails in spam.
+                    </p>
+                    <p className="mt-1.5">Instead, we can host the file and add a <strong>Download</strong> button to the email.</p>
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => hostFileAsLink(oversizeFile)}
+                        className="rounded-lg bg-indigo-600 px-3 py-1.5 font-medium text-white hover:bg-indigo-700"
+                      >
+                        Host it &amp; add a Download button
+                      </button>
+                      <button type="button" onClick={() => setOversizeFile(null)} className="rounded-lg px-3 py-1.5 text-amber-900 hover:bg-amber-100">
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {hosting && (
+                  <div className="mt-3 text-xs text-slate-600">
+                    <p className="flex items-center gap-2">
+                      <Loader2 size={13} className="animate-spin" /> Uploading {hosting.name}… {hosting.done}%
+                    </p>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-slate-100">
+                      <div className="h-full bg-indigo-500 transition-all" style={{ width: `${hosting.done}%` }} />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {unknownTags.length > 0 && (

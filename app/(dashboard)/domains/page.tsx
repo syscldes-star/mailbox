@@ -258,7 +258,7 @@ export default function DomainsPage() {
                       const isWaiting = state.steps[step as keyof typeof state.steps] === "waiting";
                       return (
                         <p key={step} className={`rounded-lg p-2 text-xs ${isWaiting ? "bg-amber-50 text-amber-800" : "bg-red-50 text-red-600"}`}>
-                          {STEP_LABELS[step] ?? step}: {msg}
+                          {isWaiting ? `Waiting: ${msg}` : `${STEP_LABELS[step] ?? step}: ${msg}`}
                         </p>
                       );
                     })}
