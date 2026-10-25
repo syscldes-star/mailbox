@@ -20,13 +20,7 @@ import { signSignupLinks } from "./subscribe";
 import { addUtmTags, clickTrackingUrl, openPixelUrl, rewriteLinks, withOpenPixel, type UtmTags } from "./tracking";
 
 const CONCURRENCY = Math.max(1, Number(process.env.BULK_EMAIL_CONCURRENCY) || 5);
-/** Sending speed. BULK_EMAIL_RATE_PER_MINUTE (e.g. 10) wins when set --
- * set it to your Oracle "messages per minute" limit so sends never hit it.
- * Otherwise BULK_EMAIL_RATE_PER_SECOND (default 10). */
-const RATE_PER_SECOND =
-  Number(process.env.BULK_EMAIL_RATE_PER_MINUTE) > 0
-    ? Number(process.env.BULK_EMAIL_RATE_PER_MINUTE) / 60
-    : Math.max(1, Number(process.env.BULK_EMAIL_RATE_PER_SECOND) || 10);
+const RATE_PER_SECOND = Math.max(1, Number(process.env.BULK_EMAIL_RATE_PER_SECOND) || 10);
 /** When Oracle's per-minute limit is hit, wait this long and try again
  * (up to MAX_RATE_PAUSES times for one email) instead of failing it. */
 const RATE_PAUSE_MS = 61_000;
