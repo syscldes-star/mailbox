@@ -22,6 +22,7 @@ const Announcement =
         tone: String,
         panels: [String],
         ownersOnly: Boolean,
+        onlyInPanels: Boolean,
         banner: Boolean,
         active: Boolean,
         showUntil: Date,
@@ -75,16 +76,24 @@ export interface AnnouncementBanner {
   tone: "info" | "warning";
 }
 
-/** The admin's banners for this person -- the same rules as main: active
- * workspaces only; `panels` matches workspaces with any of them;
- * `ownersOnly` skips team members; the platform team gets none. */
-export async function bannersFor(auth: {
-  user: { email: string; platformRole?: string | null };
-  membership: { role: string };
-  workspace: { status?: string; panels?: string[] } | null;
-}): Promise<AnnouncementBanner[]> {
+/** The admin's banners for this person in this app -- the same rules as
+ * main: active workspaces only; `panels` matches people who have one of
+ * them themselves (the owner: all the workspace's panels; a team member:
+ * the ones they were given); `ownersOnly` skips team members;
+ * `onlyInPanels` shows it only in those panels' apps (so here only if
+ * `appPanel` is one of them); the platform team gets none. */
+export async function bannersFor(
+  auth: {
+    user: { email: string; platformRole?: string | null };
+    membership: { role: string; panels?: string[] };
+    workspace: { status?: string; panels?: string[] } | null;
+  },
+  appPanel: string
+): Promise<AnnouncementBanner[]> {
   if (isPlatformTeam(auth.user) || (auth.workspace?.status ?? "active") !== "active") return [];
   const workspacePanels = auth.workspace?.panels ?? [];
+  const mine =
+    auth.membership.role === "owner" ? workspacePanels : (auth.membership.panels ?? []).filter((p) => workspacePanels.includes(p));
   const now = new Date();
   const list = await Announcement.find({
     active: true,
@@ -94,11 +103,12 @@ export async function bannersFor(auth: {
     .sort({ createdAt: -1 })
     .limit(20)
     .lean<
-      { _id: unknown; title: string; message: string; tone?: string; panels?: string[]; ownersOnly?: boolean }[]
+      { _id: unknown; title: string; message: string; tone?: string; panels?: string[]; ownersOnly?: boolean; onlyInPanels?: boolean }[]
     >();
   return list
     .filter((a) => !(a.ownersOnly && auth.membership.role !== "owner"))
-    .filter((a) => !a.panels?.length || a.panels.some((p) => workspacePanels.includes(p)))
+    .filter((a) => !a.panels?.length || a.panels.some((p) => mine.includes(p)))
+    .filter((a) => !a.onlyInPanels || !!a.panels?.includes(appPanel))
     .slice(0, 3)
     .map((a) => ({ id: String(a._id), title: a.title, message: a.message, tone: a.tone === "warning" ? "warning" : "info" }));
 }

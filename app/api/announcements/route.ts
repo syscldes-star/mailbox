@@ -1,4 +1,4 @@
-import { requireAuth } from "@/lib/api/requireAuth";
+import { APP_PANEL, requireAuth } from "@/lib/api/requireAuth";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { bannersFor } from "@/lib/platform";
 
@@ -7,5 +7,5 @@ import { bannersFor } from "@/lib/platform";
 export async function GET() {
   const auth = await requireAuth();
   if (!auth) return apiError("Not authenticated.", 401);
-  return apiSuccess(await bannersFor(auth));
+  return apiSuccess(await bannersFor(auth, APP_PANEL));
 }
