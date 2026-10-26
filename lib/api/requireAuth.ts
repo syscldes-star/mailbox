@@ -3,6 +3,7 @@ import { User, type IUser } from "../models/User";
 import { WorkspaceMember, type IWorkspaceMember } from "../models/WorkspaceMember";
 import { Workspace, type IWorkspace } from "../models/Workspace";
 import { getSessionPayload } from "../auth/session";
+import { isPlatformTeam, touchSession, underMaintenance } from "../platform";
 
 /** The main app's panel that gives access to this app. */
 export const APP_PANEL = "email";
@@ -19,7 +20,8 @@ export type SessionCheck =
   | { ok: true; auth: AuthContext }
   /** signed_out: no/invalid/old session (log in again on main).
    * no_access: signed in, but this app's panel isn't theirs (yet), or
-   * their workspace is suspended -- main sends them where they belong. */
+   * their workspace is suspended, or the platform is in maintenance --
+   * main sends them where they belong. */
   | { ok: false; reason: "signed_out" | "no_access" };
 
 /** Same rules as main's lib/access.ts: the platform admin can use every
@@ -53,7 +55,13 @@ export async function checkSession(): Promise<SessionCheck> {
   // Signed out everywhere on main (e.g. a password change) since this
   // token was issued.
   if ((payload.sv ?? 0) !== (user.sessionVersion ?? 0)) return { ok: false, reason: "signed_out" };
+  // Blocked by the platform admin (main also ended their sessions).
+  if (user.blocked && !isPlatformTeam(user)) return { ok: false, reason: "signed_out" };
   if (!hasAppPanel(user, membership, workspace)) return { ok: false, reason: "no_access" };
+  // Maintenance mode (main's Settings): main shows the "Back soon" screen.
+  if (!isPlatformTeam(user) && (await underMaintenance())) return { ok: false, reason: "no_access" };
+
+  touchSession(payload.sid);
 
   return {
     ok: true,

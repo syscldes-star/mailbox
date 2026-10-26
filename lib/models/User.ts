@@ -8,6 +8,10 @@ export interface IUser extends Document {
   avatarUrl?: string;
   activeWorkspaceId?: mongoose.Types.ObjectId;
   sessionVersion?: number;
+  /** Owned by main: blocked by the platform admin. */
+  blocked?: boolean;
+  /** Owned by main: "support" for platform support staff. */
+  platformRole?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -39,6 +43,9 @@ const UserSchema = new Schema<IUser>(
     // Owned by main: bumped on a password change to sign the user out
     // everywhere. Read-only here.
     sessionVersion: { type: Number, default: 0 },
+    // Owned by main as well; read-only here.
+    blocked: { type: Boolean },
+    platformRole: { type: String },
   },
   { timestamps: true }
 );

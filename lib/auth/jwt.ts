@@ -10,6 +10,8 @@ export interface SessionTokenPayload {
    * change bumps it, ending every older session (see requireAuth).
    * Absent on older tokens, which counts as 0. */
   sv?: number;
+  /** Main's device record for this login (its device list). */
+  sid?: string;
 }
 
 function getSecret(): string {
