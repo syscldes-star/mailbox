@@ -5,6 +5,7 @@ import { Plus, Upload, Users, Trash2, Download, Send, Pencil, Check, X, Search, 
 import { apiDelete, apiGet, apiPost, apiPut, ApiError } from "@/lib/api/client";
 import { recipientsToCsv } from "@/lib/bulk-email/recipients";
 import { cardClass, downloadTextFile, formatDate, inputClass, labelClass, primaryButton, secondaryButton } from "./ui";
+import { CreatedBy, ShareButton, type CreatorInfo } from "./Sharing";
 
 interface ListSummary {
   id: string;
@@ -12,6 +13,8 @@ interface ListSummary {
   columns: string[];
   count: number;
   updatedAt: string;
+  createdByInfo?: CreatorInfo;
+  sharedWith?: string[];
 }
 
 interface Contact {
@@ -33,6 +36,7 @@ export default function ListsTab({
 }) {
   const [lists, setLists] = useState<ListSummary[] | null>(null);
   const [canManage, setCanManage] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -45,7 +49,8 @@ export default function ListsTab({
 
   async function load() {
     try {
-      const r = await apiGet<{ lists: ListSummary[]; canManage: boolean }>("/api/email/lists");
+      const r = await apiGet<{ lists: ListSummary[]; canManage: boolean; isOwner?: boolean }>("/api/email/lists");
+      setIsOwner(!!r.isOwner);
       setLists(r.lists);
       setCanManage(r.canManage);
     } catch (err) {
@@ -188,12 +193,38 @@ export default function ListsTab({
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {lists.map((l) => (
-            <button key={l.id} onClick={() => openList(l.id)} className={cardClass + " text-left transition-shadow hover:shadow-md"}>
-              <p className="font-serif text-base font-bold text-slate-900">{l.name}</p>
+            // A div rather than a <button>, so the Share button can sit inside.
+            <div
+              key={l.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => openList(l.id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  openList(l.id);
+                }
+              }}
+              className={cardClass + " cursor-pointer text-left transition-shadow hover:shadow-md"}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="font-serif text-base font-bold text-slate-900">{l.name}</p>
+                {isOwner && (
+                  <ShareButton
+                    kind="lists"
+                    id={l.id}
+                    name={l.name}
+                    sharedWith={l.sharedWith ?? []}
+                    creatorId={l.createdByInfo?.id ?? null}
+                    onSaved={(ids) => setLists((list) => list && list.map((x) => (x.id === l.id ? { ...x, sharedWith: ids } : x)))}
+                  />
+                )}
+              </div>
+              <CreatedBy info={l.createdByInfo} sharedCount={l.sharedWith?.length} />
               <p className="mt-1 text-sm text-slate-700">{l.count.toLocaleString()} contacts</p>
               <p className="mt-1 truncate text-xs text-slate-400">Columns: {l.columns.join(", ")}</p>
               <p className="text-xs text-slate-400">Updated {formatDate(l.updatedAt)}</p>
-            </button>
+            </div>
           ))}
         </div>
       )}

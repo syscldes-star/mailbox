@@ -7,6 +7,7 @@
 
 import { NextRequest } from "next/server";
 import { requireAuth } from "@/lib/api/requireAuth";
+import { visibleTo } from "@/lib/visibility";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { ContactList } from "@/lib/models/ContactList";
 import { EmailSuppression } from "@/lib/models/EmailSuppression";
@@ -31,8 +32,9 @@ export async function GET(req: NextRequest) {
   const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const search = q ? { $or: [{ "contacts.email": { $regex: escaped } }, { "contacts.name": { $regex: escaped, $options: "i" } }] } : {};
 
+  // Subscribers of the lists this person can see.
   const [result] = await ContactList.aggregate<{ total: { n: number }[]; rows: Row[] }>([
-    { $match: { workspaceId: auth.workspaceId } },
+    { $match: visibleTo(auth) },
     { $unwind: "$contacts" },
     { $match: { "contacts.vars.signup_form": { $exists: true }, ...search } },
     {

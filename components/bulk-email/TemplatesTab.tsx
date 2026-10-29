@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { FileText, Pencil, Trash2, Check, X, Send } from "lucide-react";
 import { apiDelete, apiGet, apiPut, ApiError } from "@/lib/api/client";
+import { CreatedBy, ShareButton, type CreatorInfo } from "./Sharing";
 import { cardClass, formatDate, inputClass, secondaryButton } from "./ui";
 
 export interface SavedTemplate {
@@ -12,11 +13,14 @@ export interface SavedTemplate {
   preheader?: string;
   bodyHtml: string;
   updatedAt: string;
+  createdByInfo?: CreatorInfo;
+  sharedWith?: string[];
 }
 
 export default function TemplatesTab({ onUse }: { onUse: (template: SavedTemplate) => void }) {
   const [templates, setTemplates] = useState<SavedTemplate[] | null>(null);
   const [canManage, setCanManage] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -25,9 +29,10 @@ export default function TemplatesTab({ onUse }: { onUse: (template: SavedTemplat
 
   async function load() {
     try {
-      const res = await apiGet<{ templates: SavedTemplate[]; canManage: boolean }>("/api/email/templates");
+      const res = await apiGet<{ templates: SavedTemplate[]; canManage: boolean; isOwner?: boolean }>("/api/email/templates");
       setTemplates(res.templates);
       setCanManage(res.canManage);
+      setIsOwner(!!res.isOwner);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load templates.");
     }
@@ -88,10 +93,23 @@ export default function TemplatesTab({ onUse }: { onUse: (template: SavedTemplat
                     </button>
                   </div>
                 ) : (
-                  <p className="font-serif text-base font-bold text-slate-900">{t.name}</p>
+                  <div>
+                    <p className="font-serif text-base font-bold text-slate-900">{t.name}</p>
+                    <CreatedBy info={t.createdByInfo} sharedCount={t.sharedWith?.length} />
+                  </div>
                 )}
                 {canManage && renamingId !== t.id && (
                   <div className="flex shrink-0 gap-1">
+                    {isOwner && (
+                      <ShareButton
+                        kind="templates"
+                        id={t.id}
+                        name={t.name}
+                        sharedWith={t.sharedWith ?? []}
+                        creatorId={t.createdByInfo?.id ?? null}
+                        onSaved={(ids) => setTemplates((list) => list && list.map((x) => (x.id === t.id ? { ...x, sharedWith: ids } : x)))}
+                      />
+                    )}
                     <button
                       onClick={() => {
                         setRenamingId(t.id);

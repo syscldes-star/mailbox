@@ -7,6 +7,7 @@
 import { NextRequest } from "next/server";
 import mongoose from "mongoose";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
+import { visibleTo } from "@/lib/visibility";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { ContactList, MAX_CONTACTS_PER_LIST } from "@/lib/models/ContactList";
 import { parseRecipients } from "@/lib/bulk-email/recipients";
@@ -20,7 +21,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   const { id } = await params;
   if (!mongoose.isValidObjectId(id)) return apiError("List not found.", 404);
 
-  const list = await ContactList.findOne({ _id: id, workspaceId: auth.workspaceId }).lean();
+  const list = await ContactList.findOne({ _id: id, ...visibleTo(auth) }).lean();
   if (!list) return apiError("List not found.", 404);
   const { _id, __v, workspaceId: _w, ...rest } = list as typeof list & { __v?: number };
   return apiSuccess({ id: String(_id), ...rest });
@@ -35,7 +36,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
   const { id } = await params;
   if (!mongoose.isValidObjectId(id)) return apiError("List not found.", 404);
 
-  const list = await ContactList.findOne({ _id: id, workspaceId: auth.workspaceId });
+  const list = await ContactList.findOne({ _id: id, ...visibleTo(auth) });
   if (!list) return apiError("List not found.", 404);
 
   const { name, addText, removeEmails } = await req.json();
@@ -97,7 +98,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   const { id } = await params;
   if (!mongoose.isValidObjectId(id)) return apiError("List not found.", 404);
 
-  const result = await ContactList.deleteOne({ _id: id, workspaceId: auth.workspaceId });
+  const result = await ContactList.deleteOne({ _id: id, ...visibleTo(auth) });
   if (result.deletedCount === 0) return apiError("List not found.", 404);
   return apiSuccess({ id }, "List deleted.");
 }

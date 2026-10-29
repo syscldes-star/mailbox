@@ -6,6 +6,7 @@
 import { NextRequest } from "next/server";
 import mongoose from "mongoose";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
+import { workVisibleTo } from "@/lib/visibility";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { BulkEmailJob } from "@/lib/models/BulkEmailJob";
 import { addRecipients, cleanRecipients, type IncomingRecipient } from "@/lib/bulk-email/recipient-store";
@@ -22,7 +23,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { id } = await params;
   if (!mongoose.isValidObjectId(id)) return apiError("Bulk send not found.", 404);
 
-  const job = await BulkEmailJob.findOne({ _id: id, workspaceId: auth.workspaceId }).select("status").lean();
+  const job = await BulkEmailJob.findOne({ _id: id, ...(await workVisibleTo(auth!)) }).select("status").lean();
   if (!job) return apiError("Bulk send not found.", 404);
   if (job.status !== "preparing") return apiError("Recipients can only be added before the send starts.", 409);
 

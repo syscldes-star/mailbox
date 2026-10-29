@@ -6,6 +6,12 @@ const SESSION_DURATION = "7d";
 export interface SessionTokenPayload {
   userId: string;
   workspaceId: string;
+  /** The user's sessionVersion when main issued this token. A password
+   * change bumps it, ending every older session (see requireAuth).
+   * Absent on older tokens, which counts as 0. */
+  sv?: number;
+  /** Main's device record for this login (its device list). */
+  sid?: string;
 }
 
 function getSecret(): string {

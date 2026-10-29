@@ -7,6 +7,7 @@
 
 import { NextRequest } from "next/server";
 import { requireAuth } from "@/lib/api/requireAuth";
+import { visibleTo, workVisibleTo } from "@/lib/visibility";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { overviewStats } from "@/lib/bulk-email/overview-stats";
 
@@ -20,6 +21,6 @@ export async function GET(req: NextRequest) {
   const tz = Math.max(-14 * 60, Math.min(14 * 60, Math.round(Number(q.get("tz")) || 0)));
 
   return apiSuccess(
-    await overviewStats({ workspaceId: auth.workspaceId, days, campaignId: q.get("campaignId") || undefined, tzOffset: tz })
+    await overviewStats({ workspaceId: auth.workspaceId, jobScope: await workVisibleTo(auth), listScope: visibleTo(auth), days, campaignId: q.get("campaignId") || undefined, tzOffset: tz })
   );
 }

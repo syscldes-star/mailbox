@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Plus, Copy, Check, ExternalLink, Pencil, Trash2, FormInput, Loader2, Users, RefreshCw } from "lucide-react";
 import { apiDelete, apiGet, apiPost, apiPut, ApiError } from "@/lib/api/client";
 import { cardClass, inputClass, labelClass, primaryButton, secondaryButton } from "./ui";
+import { CreatedBy, ShareButton, type CreatorInfo } from "./Sharing";
 
 interface SignupFormRow {
   id: string;
@@ -23,6 +24,8 @@ interface SignupFormRow {
   redirectUrl?: string;
   active: boolean;
   signups: number;
+  createdByInfo?: CreatorInfo;
+  sharedWith?: string[];
 }
 
 interface Draft {
@@ -135,11 +138,14 @@ function SignupsPanel({ formId, listName }: { formId: string; listName: string }
   );
 }
 
-export default function FormsTab({ senders }: { senders: { domain: string; defaultLocalPart: string }[] }) {
+export default function FormsTab({ senders }: { senders: { domain: string; defaultLocalPart: string; mailboxes: string[] | null }[] }) {
+  // Confirmation emails, like all email, can only come from a webmail mailbox.
+  const fromOptions = senders.flatMap((s) => (s.mailboxes ?? []).map((m) => ({ local: m, domain: s.domain })));
   const [forms, setForms] = useState<SignupFormRow[] | null>(null);
   const [lists, setLists] = useState<{ id: string; name: string }[]>([]);
   const [baseUrl, setBaseUrl] = useState("");
   const [canManage, setCanManage] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
   const [editing, setEditing] = useState<{ id: string | null; draft: Draft } | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -151,12 +157,13 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
   async function load() {
     try {
       const [f, l] = await Promise.all([
-        apiGet<{ forms: SignupFormRow[]; baseUrl: string; canManage: boolean }>("/api/email/forms"),
+        apiGet<{ forms: SignupFormRow[]; baseUrl: string; canManage: boolean; isOwner?: boolean }>("/api/email/forms"),
         apiGet<{ lists: { id: string; name: string }[] }>("/api/email/lists"),
       ]);
       setForms(f.forms);
       setBaseUrl(f.baseUrl.replace(/\/+$/, ""));
       setCanManage(f.canManage);
+      setIsOwner(!!f.isOwner);
       setLists(l.lists);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load signup forms.");
@@ -174,8 +181,8 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
       draft: {
         name: "",
         listId: lists[0]?.id ?? "",
-        fromDomain: senders[0]?.domain ?? "",
-        fromLocalPart: senders[0]?.defaultLocalPart ?? "",
+        fromDomain: fromOptions[0]?.domain ?? "",
+        fromLocalPart: fromOptions[0]?.local ?? "",
         fromName: "",
         heading: "Join our newsletter",
         description: "",
@@ -252,7 +259,7 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
           People sign up on a form, confirm by email, and are then added to a list -- proof they agreed to hear from you.
         </p>
         {canManage && !editing && (
-          <button onClick={startNew} disabled={lists.length === 0 || senders.length === 0} className={primaryButton}>
+          <button onClick={startNew} disabled={lists.length === 0 || fromOptions.length === 0} className={primaryButton}>
             <Plus size={15} /> New form
           </button>
         )}
@@ -306,17 +313,27 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
             </div>
             <div>
               <label className={labelClass}>Confirmation email from</label>
-              <div className="flex items-center gap-1">
-                <input value={editing.draft.fromLocalPart} onChange={(e) => set({ fromLocalPart: e.target.value })} className={inputClass} />
-                <span className="text-sm text-slate-400">@</span>
-                <select value={editing.draft.fromDomain} onChange={(e) => set({ fromDomain: e.target.value })} className={inputClass}>
-                  {senders.map((s) => (
-                    <option key={s.domain} value={s.domain}>
-                      {s.domain}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {(() => {
+                const current = `${editing.draft.fromLocalPart}@${editing.draft.fromDomain}`;
+                const valid = fromOptions.some((o) => `${o.local}@${o.domain}` === current);
+                return (
+                  <select
+                    value={valid ? current : ""}
+                    onChange={(e) => {
+                      const [local, domain] = e.target.value.split("@");
+                      set({ fromLocalPart: local ?? "", fromDomain: domain ?? "" });
+                    }}
+                    className={inputClass}
+                  >
+                    {!valid && <option value="">{editing.draft.fromLocalPart ? `${current} isn't a mailbox -- pick one` : "Pick a mailbox…"}</option>}
+                    {fromOptions.map((o) => (
+                      <option key={`${o.local}@${o.domain}`} value={`${o.local}@${o.domain}`}>
+                        {o.local}@{o.domain}
+                      </option>
+                    ))}
+                  </select>
+                );
+              })()}
             </div>
             <div>
               <label className={labelClass}>Sender name (optional)</label>
@@ -372,8 +389,19 @@ export default function FormsTab({ senders }: { senders: { domain: string; defau
                     <p className="mt-1 text-xs text-slate-500">
                       Adds to <strong>{f.listName}</strong> · {f.signups.toLocaleString()} confirmed signup{f.signups === 1 ? "" : "s"}
                     </p>
+                    <CreatedBy info={f.createdByInfo} sharedCount={f.sharedWith?.length} />
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    {isOwner && (
+                      <ShareButton
+                        kind="forms"
+                        id={f.id}
+                        name={f.name}
+                        sharedWith={f.sharedWith ?? []}
+                        creatorId={f.createdByInfo?.id ?? null}
+                        onSaved={(ids) => setForms((list) => list && list.map((x) => (x.id === f.id ? { ...x, sharedWith: ids } : x)))}
+                      />
+                    )}
                     <a href={url} target="_blank" rel="noreferrer" className={secondaryButton}>
                       <ExternalLink size={13} /> Open form
                     </a>

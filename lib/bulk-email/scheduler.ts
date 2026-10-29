@@ -5,7 +5,8 @@
 // so a plain interval is enough -- no external cron needed.
 //
 // Every minute: start scheduled sends that are due and restart sends
-// whose worker died. Every 15 minutes: sync bounces and spam complaints
+// whose worker died. Every 5 minutes: carry on setting up domains that
+// were waiting for DNS records. Every 15 minutes: sync bounces and spam complaints
 // from Oracle.
 //
 // Runs only in production by default: a local `next dev` usually points
@@ -16,9 +17,12 @@ import { connectToDatabase } from "../db/mongodb";
 import { resumeStaleJobs, startDueScheduledJobs } from "./process-job";
 import { syncBounces } from "./bounces";
 import { cleanupAbandonedUploads } from "./recipient-store";
+import { resumeWaitingDomains } from "../email-provisioning/resume";
 
 const TICK_MS = 60_000;
 const BOUNCE_SYNC_EVERY_TICKS = 15;
+/** Domains waiting for DNS records are re-checked every 5 minutes. */
+const DOMAIN_CHECK_EVERY_TICKS = 5;
 
 declare global {
   var __bulkEmailScheduler: NodeJS.Timeout | undefined;
@@ -28,6 +32,7 @@ async function tick(count: number) {
   await connectToDatabase();
   await startDueScheduledJobs();
   await resumeStaleJobs();
+  if (count % DOMAIN_CHECK_EVERY_TICKS === 0) await resumeWaitingDomains();
   if (count % BOUNCE_SYNC_EVERY_TICKS === 0) {
     await cleanupAbandonedUploads();
     const result = await syncBounces();

@@ -27,6 +27,11 @@ export interface IEmailProvisioning extends Document {
   oracleDkimCnameName?: string;
   oracleDkimCnameValue?: string;
   oracleSenderId?: string;
+  dnsMode?: "vercel" | "manual";
+  verificationToken?: string;
+  oracleReturnPathId?: string;
+  returnPathCnameName?: string;
+  returnPathCnameValue?: string;
   updatedAt: Date;
   createdAt: Date;
 }
@@ -48,6 +53,11 @@ const EmailProvisioningSchema = new Schema<IEmailProvisioning>(
     oracleDkimCnameName: String,
     oracleDkimCnameValue: String,
     oracleSenderId: String,
+    dnsMode: { type: String, enum: ["vercel", "manual"] },
+    verificationToken: String,
+    oracleReturnPathId: String,
+    returnPathCnameName: String,
+    returnPathCnameValue: String,
   },
   { timestamps: true }
 );

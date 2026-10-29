@@ -4,7 +4,7 @@
 
 import mongoose from "mongoose";
 import { ContactList } from "../models/ContactList";
-import { LOCAL_PART_PATTERN, loadSenderDomains } from "./access";
+import { LOCAL_PART_PATTERN, senderProblem } from "./access";
 
 export interface FormInput {
   name?: string;
@@ -22,7 +22,14 @@ export interface FormInput {
 
 /** Returns cleaned fields, or an error message. `partial` allows
  * updating only some fields. */
-export async function validateFormInput(workspaceId: string, input: FormInput, partial: boolean) {
+/** `listScope` limits which lists a form can point at (lib/visibility.ts
+ * visibleTo); defaults to the whole workspace. */
+export async function validateFormInput(
+  workspaceId: string,
+  input: FormInput,
+  partial: boolean,
+  listScope: Record<string, unknown> = { workspaceId }
+) {
   const out: Record<string, unknown> = {};
   const need = (v: unknown) => !partial || v !== undefined;
   const str = (v: unknown, max: number) => String(v ?? "").trim().slice(0, max);
@@ -49,7 +56,7 @@ export async function validateFormInput(workspaceId: string, input: FormInput, p
 
   if (need(input.listId)) {
     if (!input.listId || !mongoose.isValidObjectId(input.listId)) return { error: "Choose the list signups go to." };
-    if (!(await ContactList.exists({ _id: input.listId, workspaceId }))) return { error: "That list doesn't exist." };
+    if (!(await ContactList.exists({ _id: input.listId, ...listScope }))) return { error: "That list doesn't exist." };
     out.listId = input.listId;
   }
 
@@ -57,8 +64,8 @@ export async function validateFormInput(workspaceId: string, input: FormInput, p
     const domain = str(input.fromDomain, 253).toLowerCase();
     const local = str(input.fromLocalPart, 64).toLowerCase();
     if (!domain || !local || !LOCAL_PART_PATTERN.test(local)) return { error: "Enter a valid sender address for the confirmation email." };
-    const senders = await loadSenderDomains(workspaceId);
-    if (!senders.some((s) => s.domain === domain)) return { error: "That domain isn't ready to send from yet." };
+    const problem = await senderProblem(workspaceId, domain, local);
+    if (problem) return { error: problem };
     out.fromDomain = domain;
     out.fromLocalPart = local;
   }

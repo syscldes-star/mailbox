@@ -7,7 +7,12 @@
 import { Schema, type Document, type Model } from "mongoose";
 import { emailModel } from "../db/mongodb";
 
+/** Largest upload accepted (before shrinking) and largest stored image. */
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 export const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+/** Images wider than this are scaled down -- emails are ~600px wide, so
+ * 1200px stays sharp on high-density screens. */
+export const MAX_IMAGE_WIDTH = 1200;
 
 export const IMAGE_TYPES: Record<string, string> = {
   png: "image/png",

@@ -10,6 +10,8 @@
 import { NextRequest } from "next/server";
 import mongoose from "mongoose";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
+import { workVisibleTo } from "@/lib/visibility";
+import { logWork } from "@/lib/activity";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { BulkEmailJob } from "@/lib/models/BulkEmailJob";
 import { User } from "@/lib/models/User";
@@ -19,7 +21,7 @@ import { getEmailSettings } from "@/lib/bulk-email/settings";
 import { resolveAttachments } from "@/lib/bulk-email/attachments";
 import { findCampaign } from "@/lib/bulk-email/campaigns";
 import { Campaign } from "@/lib/models/Campaign";
-import { LOCAL_PART_PATTERN, MIN_SEND_ROLE, loadSenderDomains, publicBaseUrl } from "@/lib/bulk-email/access";
+import { LOCAL_PART_PATTERN, MIN_SEND_ROLE, loadSenderDomains, publicBaseUrl, senderProblem } from "@/lib/bulk-email/access";
 
 export async function GET() {
   const auth = await requireAuth();
@@ -30,7 +32,8 @@ export async function GET() {
   const [senders, settings, jobs] = await Promise.all([
     loadSenderDomains(auth.workspaceId),
     getEmailSettings(auth.workspaceId),
-    BulkEmailJob.find({ workspaceId: auth.workspaceId, status: { $ne: "preparing" } })
+    // Owner: every send. Member: their own + sends in campaigns they can see.
+    BulkEmailJob.find({ ...(await workVisibleTo(auth)), status: { $ne: "preparing" } })
       .sort({ createdAt: -1 })
       .limit(50)
       .select("fromDomain fromLocalPart fromName subject campaignId status error createdAt completedAt scheduledAt counts trackOpens trackClicks createdBy")
@@ -125,16 +128,14 @@ export async function POST(req: NextRequest) {
     return apiError("Reply-to must be a valid email address.", 400);
   }
 
-  const senders = await loadSenderDomains(auth.workspaceId);
-  if (!senders.some((s) => s.domain === fromDomain)) {
-    return apiError("That domain isn't ready to send from yet (it needs an active approved sender).", 403);
-  }
+  const problem = await senderProblem(auth.workspaceId, fromDomain, fromLocalPart);
+  if (problem) return apiError(problem, 403);
 
   // Optional: added to the footer when set.
   const settings = await getEmailSettings(auth.workspaceId);
   let campaignId: string | undefined;
   if (body.campaignId) {
-    if (!(await findCampaign(auth.workspaceId, body.campaignId))) return apiError("That campaign no longer exists.", 400);
+    if (!(await findCampaign(auth, body.campaignId))) return apiError("That campaign no longer exists.", 400);
     campaignId = body.campaignId;
   }
   const attached = await resolveAttachments(auth.workspaceId, body.attachmentIds);
@@ -160,6 +161,8 @@ export async function POST(req: NextRequest) {
     status: "preparing",
     scheduledAt,
   });
+
+  await logWork(auth, "email_campaign_created", subject);
 
   return apiSuccess({ id: String(job._id) }, "Send created -- upload recipients, then start it.", 201);
 }

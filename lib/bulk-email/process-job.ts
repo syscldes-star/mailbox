@@ -21,6 +21,10 @@ import { addUtmTags, clickTrackingUrl, openPixelUrl, rewriteLinks, withOpenPixel
 
 const CONCURRENCY = Math.max(1, Number(process.env.BULK_EMAIL_CONCURRENCY) || 5);
 const RATE_PER_SECOND = Math.max(1, Number(process.env.BULK_EMAIL_RATE_PER_SECOND) || 10);
+/** When Oracle's per-minute limit is hit, wait this long and try again
+ * (up to MAX_RATE_PAUSES times for one email) instead of failing it. */
+const RATE_PAUSE_MS = 61_000;
+const MAX_RATE_PAUSES = 30;
 const MAX_ATTEMPTS = 3;
 /** Recipients loaded per database round trip. */
 const BATCH_SIZE = 500;
@@ -87,11 +91,29 @@ export function buildMessage(
   };
 }
 
-async function sendWithRetry(message: OutgoingEmail) {
+async function sendWithRetry(message: OutgoingEmail, onPause?: () => Promise<void>) {
+  let pauses = 0;
   for (let attempt = 1; ; attempt++) {
     try {
       return await sendEmail(message);
     } catch (err) {
+      // Per-minute limit: not this email's fault -- wait for the next
+      // minute and try again, keeping the job's heartbeat fresh meanwhile.
+      if (err instanceof SendError && err.rateLimited === "minute" && pauses < MAX_RATE_PAUSES) {
+        pauses++;
+        attempt--;
+        await onPause?.();
+        await sleep(RATE_PAUSE_MS);
+        await onPause?.();
+        continue;
+      }
+      if (err instanceof SendError && err.rateLimited === "day") {
+        throw new SendError(
+          "Oracle's daily sending limit was reached -- use \"Retry failed\" tomorrow, or ask Oracle to raise the limit. " + err.message,
+          false,
+          "day"
+        );
+      }
       if (!(err instanceof SendError) || !err.retryable || attempt >= MAX_ATTEMPTS) throw err;
       await sleep(1000 * 2 ** (attempt - 1));
     }
@@ -121,6 +143,11 @@ export async function processBulkJob(jobId: string): Promise<void> {
   try {
     const job = await BulkEmailJob.findById(jobId).lean();
     if (!job) return;
+    // Refreshes the heartbeat while a send waits out Oracle's per-minute
+    // limit, so the job isn't mistaken for a dead worker and restarted.
+    const keepAlive = async () => {
+      await BulkEmailJob.updateOne({ _id: jobId, status: "sending" }, { $set: { heartbeatAt: new Date() } });
+    };
     // Loaded once and reused for every recipient.
     const attachments = await loadAttachmentData(job.attachmentIds ?? []);
 
@@ -168,7 +195,7 @@ export async function processBulkJob(jobId: string): Promise<void> {
                     jobId,
                   }),
                   attachments,
-                });
+                }, keepAlive);
                 update = result.suppressed
                   ? { status: "skipped", error: "On Oracle's suppression list (prior bounce or complaint)" }
                   : { status: "sent", messageId: result.messageId, sentAt: new Date() };

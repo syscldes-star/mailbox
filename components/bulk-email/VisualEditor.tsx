@@ -11,6 +11,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import ImageLibrary from "./ImageLibrary";
+import { applyImageAlign, applyImageSize, currentImageSize, finishInsertedImages, IMAGE_SIZES, imageHtml, type ImageSize } from "./image-size";
 import {
   Bold,
   Italic,
@@ -92,6 +93,40 @@ export default function VisualEditor({
   const ref = useRef<HTMLDivElement | null>(null);
   const lastEmitted = useRef<string>("");
   const [showLibrary, setShowLibrary] = useState(false);
+  // Image the user clicked in the editor, with its position for the
+  // highlight box (drawn as an overlay so nothing is added to the HTML).
+  const [selectedImg, setSelectedImg] = useState<HTMLImageElement | null>(null);
+  const [imgBox, setImgBox] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  function measure(img: HTMLImageElement | null) {
+    if (!img || !wrapRef.current || !ref.current?.contains(img)) {
+      setImgBox(null);
+      return;
+    }
+    const a = img.getBoundingClientRect();
+    const b = wrapRef.current.getBoundingClientRect();
+    setImgBox({ top: a.top - b.top, left: a.left - b.left, width: a.width, height: a.height });
+  }
+
+  function selectImage(img: HTMLImageElement | null) {
+    setSelectedImg(img);
+    measure(img);
+  }
+
+  // Re-measure once the image toolbar has rendered (it moves the editor down).
+  useEffect(() => {
+    measure(selectedImg);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedImg]);
+
+  /** Change the selected image, then save the HTML. */
+  function editImage(change: (img: HTMLImageElement) => void) {
+    if (!selectedImg) return;
+    change(selectedImg);
+    emit();
+    requestAnimationFrame(() => measure(selectedImg));
+  }
 
   // Only overwrite the DOM when the value changed from outside (template
   // loaded, HTML mode edit) -- never on our own input, or the caret jumps.
@@ -139,7 +174,7 @@ export default function VisualEditor({
     setShowLibrary(true);
   }
 
-  function insertImage(url: string, alt: string) {
+  function insertImage(url: string, alt: string, size: ImageSize = "medium") {
     setShowLibrary(false);
     ref.current?.focus();
     const sel = window.getSelection();
@@ -147,7 +182,9 @@ export default function VisualEditor({
       sel.removeAllRanges();
       sel.addRange(savedRange.current);
     }
-    insertHtml(`<img src="${escapeAttr(url)}" alt="${escapeAttr(alt)}" style="max-width:100%;height:auto;" />`);
+    insertHtml(imageHtml(url, alt, size, true));
+    finishInsertedImages(ref.current);
+    emit();
   }
 
   function addButton() {
@@ -184,8 +221,10 @@ export default function VisualEditor({
     { icon: Redo2, label: "Redo", run: () => exec("redo") },
   ];
 
+  const imgSize = selectedImg ? currentImageSize(selectedImg) : null;
+
   return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 focus-within:ring-2 focus-within:ring-indigo-500">
+    <div ref={wrapRef} className="relative overflow-hidden rounded-lg border border-slate-200 focus-within:ring-2 focus-within:ring-indigo-500">
       <div className="flex flex-wrap gap-0.5 border-b border-slate-200 bg-slate-50 p-1">
         {tools.map(({ icon: Icon, label, run }) => (
           <button
@@ -202,14 +241,73 @@ export default function VisualEditor({
           </button>
         ))}
       </div>
+      {selectedImg && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-indigo-100 bg-indigo-50 px-2 py-1.5 text-xs text-slate-700" onMouseDown={(e) => e.preventDefault()}>
+          <span className="font-medium text-indigo-900">Image:</span>
+          {IMAGE_SIZES.map((s) => (
+            <button
+              key={s.key}
+              type="button"
+              onClick={() => editImage((img) => applyImageSize(img, s.key))}
+              className={`rounded px-2 py-0.5 ${imgSize === s.key ? "bg-indigo-600 text-white" : "bg-white hover:bg-indigo-100"}`}
+            >
+              {s.label}
+            </button>
+          ))}
+          <span className="mx-1 text-slate-300">|</span>
+          {(["left", "center", "right"] as const).map((a) => (
+            <button key={a} type="button" onClick={() => editImage((img) => applyImageAlign(img, a))} className="rounded bg-white px-2 py-0.5 capitalize hover:bg-indigo-100">
+              {a}
+            </button>
+          ))}
+          <span className="mx-1 text-slate-300">|</span>
+          <button
+            type="button"
+            onClick={() => {
+              const alt = window.prompt("Alt text (shown if the image doesn't load; read aloud by screen readers)", selectedImg.alt);
+              if (alt !== null) editImage((img) => img.setAttribute("alt", alt));
+            }}
+            className="rounded bg-white px-2 py-0.5 hover:bg-indigo-100"
+          >
+            Alt text
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              selectedImg.remove();
+              emit();
+              selectImage(null);
+            }}
+            className="rounded bg-white px-2 py-0.5 text-red-600 hover:bg-red-50"
+          >
+            Remove
+          </button>
+          <button type="button" onClick={() => selectImage(null)} className="ml-auto text-slate-500 hover:text-slate-800">
+            Done
+          </button>
+        </div>
+      )}
+      {imgBox && (
+        <div
+          className="pointer-events-none absolute z-10 rounded-sm outline outline-2 outline-offset-2 outline-indigo-500"
+          style={{ top: imgBox.top, left: imgBox.left, width: imgBox.width, height: imgBox.height }}
+        />
+      )}
       <div
+        onClick={(e) => selectImage(e.target instanceof HTMLImageElement ? e.target : null)}
+        onKeyDown={(e) => e.key === "Escape" && selectImage(null)}
+        onScroll={() => measure(selectedImg)}
         ref={(el) => {
           ref.current = el;
           if (editorRef) editorRef.current = el;
         }}
         contentEditable
         suppressContentEditableWarning
-        onInput={emit}
+        onInput={() => {
+          emit();
+          if (selectedImg && !ref.current?.contains(selectedImg)) selectImage(null);
+          else measure(selectedImg);
+        }}
         onBlur={emit}
         onPaste={(e) => {
           e.preventDefault();

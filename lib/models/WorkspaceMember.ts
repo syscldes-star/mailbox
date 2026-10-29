@@ -17,6 +17,8 @@ export interface IWorkspaceMember extends Document {
   userId: mongoose.Types.ObjectId;
   role: WorkspaceRole;
   invitedBy?: mongoose.Types.ObjectId;
+  /** Owned by main: panels the workspace owner gave this team member. */
+  panels?: string[];
   joinedAt: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -28,6 +30,7 @@ const WorkspaceMemberSchema = new Schema<IWorkspaceMember>(
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
     role: { type: String, enum: WORKSPACE_ROLES, required: true, default: "staff" },
     invitedBy: { type: Schema.Types.ObjectId, ref: "User" },
+    panels: { type: [String], default: undefined },
     joinedAt: { type: Date, default: Date.now },
   },
   { timestamps: true }

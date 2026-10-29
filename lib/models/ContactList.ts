@@ -23,6 +23,9 @@ export interface IContactList extends Document {
   columns: string[];
   contacts: IContact[];
   createdBy: string;
+  /** Team members the workspace owner shared this with (user ids). Members
+   * see what they created plus what's shared with them (lib/visibility.ts). */
+  sharedWith: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -43,6 +46,7 @@ const ContactListSchema = new Schema<IContactList>(
     columns: { type: [String], default: ["email", "name"] },
     contacts: { type: [ContactSchema], default: [] },
     createdBy: { type: String, required: true },
+    sharedWith: { type: [String], default: [] },
   },
   { timestamps: true }
 );
