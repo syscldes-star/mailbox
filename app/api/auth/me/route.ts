@@ -1,5 +1,6 @@
 import { checkSession } from "@/lib/api/requireAuth";
 import { apiSuccess, apiError } from "@/lib/api/response";
+import { platformTitle } from "@/lib/platform";
 
 export async function GET() {
   const result = await checkSession();
@@ -22,5 +23,7 @@ export async function GET() {
     },
     workspace: { id: auth.workspaceId, name: auth.workspace?.name ?? null },
     role: auth.membership.role,
+    /** "Super Admin" / "Support" for the platform team, else null. */
+    title: platformTitle(auth.user),
   });
 }

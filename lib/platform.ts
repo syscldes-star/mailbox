@@ -43,6 +43,15 @@ export function isPlatformTeam(user: { email: string; platformRole?: string | nu
   return (!!adminEmail && user.email.toLowerCase() === adminEmail) || user.platformRole === "support";
 }
 
+/** The title shown under the person's name in the header: "Super Admin"
+ * for the platform admin, "Support" for support staff, otherwise null
+ * (the header shows their workspace role). Same as main. */
+export function platformTitle(user: { email: string; platformRole?: string | null }): "Super Admin" | "Support" | null {
+  const adminEmail = process.env.PLATFORM_ADMIN_EMAIL?.trim().toLowerCase();
+  if (adminEmail && user.email.toLowerCase() === adminEmail) return "Super Admin";
+  return user.platformRole === "support" ? "Support" : null;
+}
+
 // Checked on every request, so remembered for a few seconds.
 let maintenanceCache: { value: boolean; at: number } | null = null;
 
