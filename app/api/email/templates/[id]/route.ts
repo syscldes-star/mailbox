@@ -6,6 +6,7 @@
 import { NextRequest } from "next/server";
 import mongoose from "mongoose";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
+import { visibleTo } from "@/lib/visibility";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { EmailTemplate } from "@/lib/models/EmailTemplate";
 import { MIN_SEND_ROLE } from "@/lib/bulk-email/access";
@@ -41,7 +42,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     update.bodyHtml = String(bodyHtml);
   }
 
-  const result = await EmailTemplate.updateOne({ _id: id, workspaceId: auth!.workspaceId }, { $set: update });
+  const result = await EmailTemplate.updateOne({ _id: id, ...visibleTo(auth!) }, { $set: update });
   if (result.matchedCount === 0) return apiError("Template not found.", 404);
   return apiSuccess({ id }, "Template updated.");
 }
@@ -52,7 +53,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   const { id } = await params;
   if (!mongoose.isValidObjectId(id)) return apiError("Template not found.", 404);
 
-  const result = await EmailTemplate.deleteOne({ _id: id, workspaceId: auth!.workspaceId });
+  const result = await EmailTemplate.deleteOne({ _id: id, ...visibleTo(auth!) });
   if (result.deletedCount === 0) return apiError("Template not found.", 404);
   return apiSuccess({ id }, "Template deleted.");
 }

@@ -13,6 +13,9 @@ export interface ICampaign extends Document {
   name: string;
   description?: string;
   createdBy: string;
+  /** Team members the workspace owner shared this with (user ids). Members
+   * see what they created plus what's shared with them (lib/visibility.ts). */
+  sharedWith: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -23,6 +26,7 @@ const CampaignSchema = new Schema<ICampaign>(
     name: { type: String, required: true, trim: true },
     description: String,
     createdBy: { type: String, required: true },
+    sharedWith: { type: [String], default: [] },
   },
   { timestamps: true }
 );

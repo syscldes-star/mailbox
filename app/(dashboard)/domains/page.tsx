@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { CheckCircle2, XCircle, Loader2, Circle, KeyRound, Copy, Plus, Search } from "lucide-react";
+import { CheckCircle2, XCircle, Loader2, Circle, KeyRound, Copy, Plus, Search, Clock, RefreshCw, Route } from "lucide-react";
+import DnsRecords from "@/components/bulk-email/DnsRecords";
 import { apiGet, apiPost, ApiError } from "@/lib/api/client";
 import type { ProvisioningState, StepStatus } from "@/lib/email-provisioning/types";
 import DomainHealth from "@/components/bulk-email/DomainHealth";
 
 const STEP_LABELS: Record<string, string> = {
+  ownership_verified: "Domain ownership verified",
   oracle_email_domain: "Oracle email domain",
   oracle_dkim_create: "DKIM key created",
   dns_dkim_cname: "DKIM DNS record published",
@@ -15,12 +17,18 @@ const STEP_LABELS: Record<string, string> = {
   oracle_sender: "Approved sender",
   mailcow_domain: "Mailcow domain",
   mailcow_mailbox: "Default mailbox",
+  oracle_return_path: "Return path created",
+  dns_return_path: "Return path DNS record",
+  return_path_active: "Return path active",
 };
+
+const RETURN_PATH_STEPS = ["oracle_return_path", "dns_return_path", "return_path_active"] as const;
 
 function StepIcon({ status }: { status: StepStatus }) {
   if (status === "done") return <CheckCircle2 size={15} className="text-emerald-500" />;
   if (status === "failed") return <XCircle size={15} className="text-red-500" />;
   if (status === "in_progress") return <Loader2 size={15} className="animate-spin text-indigo-500" />;
+  if (status === "waiting") return <Clock size={15} className="text-amber-500" />;
   return <Circle size={15} className="text-slate-300" />;
 }
 
@@ -35,6 +43,24 @@ export default function DomainsPage() {
 
   const [revealedPasswords, setRevealedPasswords] = useState<Record<string, string>>({});
   const [healthOpen, setHealthOpen] = useState<Record<string, boolean>>({});
+  const [dnsOpen, setDnsOpen] = useState<Record<string, boolean>>({});
+  const [checkKey, setCheckKey] = useState<Record<string, number>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  async function domainAction(d: string, action: "check" | "return_path") {
+    setBusy(d + action);
+    setError(null);
+    try {
+      await apiPost(`/api/email/domains/${encodeURIComponent(d)}`, { action });
+      setCheckKey((k) => ({ ...k, [d]: (k[d] ?? 0) + 1 }));
+      setTimeout(refresh, 1500);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Action failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function refresh() {
     try {
@@ -64,7 +90,16 @@ export default function DomainsPage() {
     setSubmitting(true);
     setError(null);
     try {
-      await apiPost("/api/email/domains", { domain, defaultMailboxLocalPart: mailboxLocalPart });
+      const res = await apiPost<{ dnsMode: "vercel" | "manual"; domain: string }>("/api/email/domains", {
+        domain,
+        defaultMailboxLocalPart: mailboxLocalPart,
+      });
+      if (res.dnsMode === "manual") {
+        setDnsOpen((o) => ({ ...o, [res.domain]: true }));
+        setNotice(
+          `${res.domain} added. Add the DNS records shown on its card at your domain provider (GoDaddy, Hostinger…) -- setup carries on by itself once they're found.`
+        );
+      }
       setDomain("");
       setShowForm(false);
       await refresh();
@@ -83,7 +118,10 @@ export default function DomainsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-serif text-2xl font-bold text-slate-900">Email Domains</h1>
-          <p className="mt-1 text-sm text-slate-500">Provision real webmail for a verified customer domain.</p>
+          <p className="mt-1 text-sm text-slate-500">
+            Set up webmail for any domain. Your site&apos;s domains are configured automatically; for other domains we show the DNS
+            records to add.
+          </p>
         </div>
         <button
           onClick={() => setShowForm((v) => !v)}
@@ -142,6 +180,7 @@ export default function DomainsPage() {
       </div>
 
       {error && <p className="text-sm text-red-600">{error}</p>}
+      {notice && <p className="rounded-lg bg-indigo-50 p-3 text-sm text-indigo-900">{notice}</p>}
 
       {/* Domain cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -153,7 +192,14 @@ export default function DomainsPage() {
           filtered.map((state) => {
             const password = revealedPasswords[state.domain];
             const mailboxAddress = `${state.defaultMailboxLocalPart}@${state.domain}`;
-            const allDone = Object.values(state.steps).every((s) => s === "done");
+            const coreSteps = Object.entries(state.steps).filter(([k]) => !(RETURN_PATH_STEPS as readonly string[]).includes(k));
+            const allDone = coreSteps.every(([, s]) => s === "done");
+            const waiting = Object.values(state.steps).some((s) => s === "waiting");
+            const failed = Object.values(state.steps).some((s) => s === "failed");
+            const manual = state.dnsMode === "manual";
+            const returnPathDone = RETURN_PATH_STEPS.every((k) => state.steps[k] === "done");
+            const returnPathStarted = RETURN_PATH_STEPS.some((k) => state.steps[k] && state.steps[k] !== "pending");
+            const showDns = dnsOpen[state.domain] ?? (manual && !allDone);
             return (
               <div
                 key={state.domain}
@@ -168,7 +214,7 @@ export default function DomainsPage() {
                         : "rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700"
                     }
                   >
-                    {allDone ? "Ready" : "Provisioning"}
+                    {allDone ? "Ready" : waiting ? "Waiting for DNS" : failed ? "Needs attention" : "Provisioning"}
                   </span>
                 </div>
 
@@ -195,7 +241,10 @@ export default function DomainsPage() {
                 )}
 
                 <div className="grid grid-cols-2 gap-2">
-                  {(Object.keys(STEP_LABELS) as (keyof typeof STEP_LABELS)[]).map((step) => (
+                  {(Object.keys(STEP_LABELS) as (keyof typeof STEP_LABELS)[])
+                    .filter((step) => step !== "ownership_verified" || manual)
+                    .filter((step) => !(RETURN_PATH_STEPS as readonly string[]).includes(step) || returnPathStarted)
+                    .map((step) => (
                     <div key={step} className="flex items-center gap-2 text-xs text-slate-600">
                       <StepIcon status={state.steps[step as keyof typeof state.steps]} />
                       {STEP_LABELS[step]}
@@ -204,13 +253,61 @@ export default function DomainsPage() {
                 </div>
 
                 {Object.entries(state.errors || {}).length > 0 && (
-                  <div className="mt-3 rounded-lg bg-red-50 p-2 text-xs text-red-600">
-                    {Object.entries(state.errors).map(([step, msg]) => (
-                      <p key={step}>
-                        {STEP_LABELS[step] ?? step}: {msg}
-                      </p>
-                    ))}
+                  <div className="mt-3 space-y-1">
+                    {Object.entries(state.errors).map(([step, msg]) => {
+                      const isWaiting = state.steps[step as keyof typeof state.steps] === "waiting";
+                      return (
+                        <p key={step} className={`rounded-lg p-2 text-xs ${isWaiting ? "bg-amber-50 text-amber-800" : "bg-red-50 text-red-600"}`}>
+                          {isWaiting ? `Waiting: ${msg}` : `${STEP_LABELS[step] ?? step}: ${msg}`}
+                        </p>
+                      );
+                    })}
                   </div>
+                )}
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {(waiting || failed) && (
+                    <button
+                      onClick={() => domainAction(state.domain, "check")}
+                      disabled={busy === state.domain + "check"}
+                      className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      <RefreshCw size={12} className={busy === state.domain + "check" ? "animate-spin" : ""} />
+                      {failed ? "Retry" : "Check now"}
+                    </button>
+                  )}
+                  {allDone && !returnPathStarted && (
+                    <button
+                      onClick={() => domainAction(state.domain, "return_path")}
+                      disabled={busy === state.domain + "return_path"}
+                      title="Makes Gmail show 'mailed-by' your domain instead of Oracle's"
+                      className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      <Route size={12} /> Set up return path
+                    </button>
+                  )}
+                  <button
+                    onClick={() => setDnsOpen((o) => ({ ...o, [state.domain]: !showDns }))}
+                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                  >
+                    {showDns ? "Hide DNS records" : manual ? "DNS records to add" : "DNS records"}
+                  </button>
+                </div>
+
+                {showDns && (
+                  <div className="mt-3">
+                    {manual && !allDone && (
+                      <p className="mb-2 text-xs text-slate-600">
+                        Add these at your domain&apos;s DNS provider. We check every few minutes and continue setup on our own once
+                        they&apos;re found (DNS changes can take up to an hour to show).
+                      </p>
+                    )}
+                    <DnsRecords domain={state.domain} refreshKey={checkKey[state.domain]} />
+                  </div>
+                )}
+
+                {allDone && returnPathDone === false && returnPathStarted && !waiting && !failed && (
+                  <p className="mt-2 text-xs text-slate-500">Setting up the return path…</p>
                 )}
 
                 {allDone && (

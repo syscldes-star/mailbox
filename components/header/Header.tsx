@@ -11,6 +11,7 @@ export default function Header() {
   const { toggleSidebar } = useSidebar();
   const user = useAuthStore((state) => state.user);
   const role = useAuthStore((state) => state.role);
+  const title = useAuthStore((state) => state.title);
   const logout = useAuthStore((state) => state.logout);
   const fullName = user ? `${user.firstName} ${user.lastName}`.trim() : "";
 
@@ -86,7 +87,7 @@ focus:ring-indigo-500 dark:bg-slate-800"
               </p>
 
               <p className="text-xs text-slate-500">
-                {getRoleLabel(role)}
+                {title ?? getRoleLabel(role)}
               </p>
             </div>
           </button>

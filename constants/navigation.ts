@@ -1,4 +1,4 @@
-import { Mail, ArrowLeftCircle } from "lucide-react";
+import { Mail, ArrowLeftCircle, LifeBuoy } from "lucide-react";
 import { NavigationItem } from "@/types/navigation";
 
 export const navigation: NavigationItem[] = [
@@ -41,6 +41,14 @@ export const navigation: NavigationItem[] = [
     title: "Back to Dashboard",
     href: `${process.env.NEXT_PUBLIC_MAIN_APP_URL ?? ""}/dashboard`,
     icon: ArrowLeftCircle,
+    type: "link",
+  },
+  {
+    // Support tickets live in main.
+    id: "get-help",
+    title: "Get help",
+    href: `${process.env.NEXT_PUBLIC_MAIN_APP_URL ?? ""}/support`,
+    icon: LifeBuoy,
     type: "link",
   },
 ];

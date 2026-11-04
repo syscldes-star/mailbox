@@ -44,10 +44,16 @@ const RECENT_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Everyone emailed in the window (excluding addresses already on the
  * do-not-email list), with their segment and score. */
-export async function computeEngagement(workspaceId: string, { days, minSends }: EngagementOptions) {
+/** `jobScope` limits which sends count (lib/visibility.ts workVisibleTo);
+ * defaults to the whole workspace. */
+export async function computeEngagement(
+  workspaceId: string,
+  { days, minSends }: EngagementOptions,
+  jobScope: Record<string, unknown> = { workspaceId }
+) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   const jobIds = (
-    await BulkEmailJob.find({ workspaceId, trackOpens: true, createdAt: { $gte: since }, status: { $nin: ["preparing", "scheduled"] } })
+    await BulkEmailJob.find({ ...jobScope, trackOpens: true, createdAt: { $gte: since }, status: { $nin: ["preparing", "scheduled"] } })
       .select("_id")
       .lean()
   ).map((j) => j._id);

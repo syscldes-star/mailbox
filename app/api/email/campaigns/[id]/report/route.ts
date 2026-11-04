@@ -7,6 +7,7 @@
 import { NextRequest } from "next/server";
 import mongoose from "mongoose";
 import { requireAuth } from "@/lib/api/requireAuth";
+import { visibleTo } from "@/lib/visibility";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { Campaign } from "@/lib/models/Campaign";
 import { BulkEmailJob } from "@/lib/models/BulkEmailJob";
@@ -21,7 +22,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   const { id } = await params;
   if (!mongoose.isValidObjectId(id)) return apiError("Campaign not found.", 404);
 
-  const campaign = await Campaign.findOne({ _id: id, workspaceId: auth.workspaceId }).lean();
+  const campaign = await Campaign.findOne({ _id: id, ...visibleTo(auth) }).lean();
   if (!campaign) return apiError("Campaign not found.", 404);
 
   const [stats, sends] = await Promise.all([

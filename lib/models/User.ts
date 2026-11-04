@@ -7,6 +7,11 @@ export interface IUser extends Document {
   lastName: string;
   avatarUrl?: string;
   activeWorkspaceId?: mongoose.Types.ObjectId;
+  sessionVersion?: number;
+  /** Owned by main: blocked by the platform admin. */
+  blocked?: boolean;
+  /** Owned by main: "support" for platform support staff. */
+  platformRole?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -35,6 +40,12 @@ const UserSchema = new Schema<IUser>(
     // workspaceId from this rather than requiring the client to pass it
     // on every call, since a user's active workspace changes rarely.
     activeWorkspaceId: { type: Schema.Types.ObjectId, ref: "Workspace" },
+    // Owned by main: bumped on a password change to sign the user out
+    // everywhere. Read-only here.
+    sessionVersion: { type: Number, default: 0 },
+    // Owned by main as well; read-only here.
+    blocked: { type: Boolean },
+    platformRole: { type: String },
   },
   { timestamps: true }
 );

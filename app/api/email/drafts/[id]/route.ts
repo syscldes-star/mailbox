@@ -7,6 +7,7 @@
 import { NextRequest } from "next/server";
 import mongoose from "mongoose";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
+import { workVisibleTo } from "@/lib/visibility";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { EmailDraft } from "@/lib/models/EmailDraft";
 import { cleanDraftInput, type DraftInput } from "@/lib/bulk-email/drafts";
@@ -20,7 +21,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   const { id } = await params;
   if (!mongoose.isValidObjectId(id)) return apiError("Draft not found.", 404);
 
-  const draft = await EmailDraft.findOne({ _id: id, workspaceId: auth.workspaceId }).lean();
+  const draft = await EmailDraft.findOne({ _id: id, ...(await workVisibleTo(auth)) }).lean();
   if (!draft) return apiError("Draft not found.", 404);
   const { _id, __v, workspaceId: _w, ...rest } = draft as typeof draft & { __v?: number };
   return apiSuccess({ id: String(_id), ...rest });
@@ -41,13 +42,13 @@ export async function PUT(req: NextRequest, { params }: Params) {
   const { id } = await params;
   if (!mongoose.isValidObjectId(id)) return apiError("Draft not found.", 404);
 
-  const result = await cleanDraftInput(auth!.workspaceId, (await req.json()) as DraftInput);
+  const result = await cleanDraftInput(auth!, (await req.json()) as DraftInput);
   if ("error" in result) return apiError(result.error!, 400);
   // Fields left empty are cleared, so the saved draft matches Compose exactly.
   const set = Object.fromEntries(Object.entries(result.value).filter(([, v]) => v !== undefined));
   const unset = Object.fromEntries(Object.entries(result.value).filter(([, v]) => v === undefined).map(([k]) => [k, 1]));
   const updated = await EmailDraft.findOneAndUpdate(
-    { _id: id, workspaceId: auth!.workspaceId },
+    { _id: id, ...(await workVisibleTo(auth!)) },
     { $set: { ...set, updatedBy: auth!.userId }, ...(Object.keys(unset).length ? { $unset: unset } : {}) },
     { new: true, projection: { updatedAt: 1 } }
   ).lean();
@@ -60,7 +61,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   if (error) return error;
   const { id } = await params;
   if (!mongoose.isValidObjectId(id)) return apiError("Draft not found.", 404);
-  const deleted = await EmailDraft.deleteOne({ _id: id, workspaceId: auth!.workspaceId });
+  const deleted = await EmailDraft.deleteOne({ _id: id, ...(await workVisibleTo(auth!)) });
   if (deleted.deletedCount === 0) return apiError("Draft not found.", 404);
   return apiSuccess({ id }, "Draft deleted.");
 }

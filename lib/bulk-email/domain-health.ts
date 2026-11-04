@@ -7,12 +7,12 @@
 
 import { resolveCname, resolveMx, resolveTxt } from "node:dns/promises";
 import type { ProvisioningState } from "../email-provisioning/types";
-import { getDkimLifecycleState } from "../email-provisioning/oracle-client";
+import { getDkimLifecycleState, getReturnPath } from "../email-provisioning/oracle-client";
 
 export type HealthLevel = "ok" | "warning" | "error";
 
 export interface HealthCheck {
-  id: "dkim_dns" | "dkim_oracle" | "sender" | "dmarc" | "spf" | "mx";
+  id: "dkim_dns" | "dkim_oracle" | "sender" | "dmarc" | "spf" | "mx" | "return_path";
   label: string;
   level: HealthLevel;
   detail: string;
@@ -144,6 +144,45 @@ export async function checkDomainHealth(state: ProvisioningState): Promise<Healt
             detail: `MX points to ${mx.join(", ")}, not ${mailHost} -- replies won't reach your mailboxes here.`,
           }
     );
+  }
+
+  // Custom return path: without it Gmail shows "mailed-by" Oracle's
+  // shared domain instead of yours.
+  if (!state.oracleReturnPathId || !state.returnPathCnameName || !state.returnPathCnameValue) {
+    add({
+      id: "return_path",
+      label: "Return path (mailed-by)",
+      level: "warning",
+      detail: "Not set up -- Gmail shows \"mailed-by: oracleemaildelivery.com\". Use \"Set up return path\" on the Domains page.",
+    });
+  } else {
+    const cname = await query(() => resolveCname(state.returnPathCnameName!));
+    let oracleState: string | undefined;
+    try {
+      oracleState = (await getReturnPath(state.oracleReturnPathId)).state;
+    } catch {
+      oracleState = undefined;
+    }
+    if ("failed" in cname) add(couldNotCheck("return_path", "Return path (mailed-by)", cname.failed));
+    else if ("missing" in cname || !cname.records.map(norm).includes(norm(state.returnPathCnameValue))) {
+      add({
+        id: "return_path",
+        label: "Return path (mailed-by)",
+        level: "warning",
+        detail: `${state.returnPathCnameName} should be a CNAME to ${state.returnPathCnameValue}.`,
+      });
+    } else {
+      add(
+        oracleState === "ACTIVE"
+          ? { id: "return_path", label: "Return path (mailed-by)", level: "ok", detail: `Gmail shows "mailed-by: ${domain}".` }
+          : {
+              id: "return_path",
+              label: "Return path (mailed-by)",
+              level: "warning",
+              detail: `Record published; Oracle reports it as ${oracleState ?? "unknown"} (it can take up to an hour to turn active).`,
+            }
+      );
+    }
   }
 
   return checks;

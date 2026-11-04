@@ -8,6 +8,7 @@
 import { NextRequest } from "next/server";
 import mongoose from "mongoose";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
+import { visibleTo } from "@/lib/visibility";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { Campaign } from "@/lib/models/Campaign";
 import { EmailDraft } from "@/lib/models/EmailDraft";
@@ -23,7 +24,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   const { id } = await params;
   if (!mongoose.isValidObjectId(id)) return apiError("Campaign not found.", 404);
 
-  const campaign = await Campaign.findOne({ _id: id, workspaceId: auth.workspaceId }).lean();
+  const campaign = await Campaign.findOne({ _id: id, ...visibleTo(auth) }).lean();
   if (!campaign) return apiError("Campaign not found.", 404);
 
   const [stats, drafts, sends] = await Promise.all([
@@ -73,7 +74,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     update.name = name;
   }
   if (body.description !== undefined) update.description = String(body.description).trim().slice(0, 500);
-  const result = await Campaign.updateOne({ _id: id, workspaceId: auth!.workspaceId }, { $set: update });
+  const result = await Campaign.updateOne({ _id: id, ...visibleTo(auth!) }, { $set: update });
   if (result.matchedCount === 0) return apiError("Campaign not found.", 404);
   return apiSuccess({ id }, "Campaign saved.");
 }
@@ -84,7 +85,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   const { id } = await params;
   if (!mongoose.isValidObjectId(id)) return apiError("Campaign not found.", 404);
 
-  const deleted = await Campaign.deleteOne({ _id: id, workspaceId: auth!.workspaceId });
+  const deleted = await Campaign.deleteOne({ _id: id, ...visibleTo(auth!) });
   if (deleted.deletedCount === 0) return apiError("Campaign not found.", 404);
   await Promise.all([
     EmailDraft.deleteMany({ workspaceId: auth!.workspaceId, campaignId: id }),

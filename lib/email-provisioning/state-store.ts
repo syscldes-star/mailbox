@@ -24,6 +24,11 @@ function toState(doc: any): ProvisioningState {
     oracleDkimCnameName: doc.oracleDkimCnameName,
     oracleDkimCnameValue: doc.oracleDkimCnameValue,
     oracleSenderId: doc.oracleSenderId,
+    dnsMode: doc.dnsMode,
+    verificationToken: doc.verificationToken,
+    oracleReturnPathId: doc.oracleReturnPathId,
+    returnPathCnameName: doc.returnPathCnameName,
+    returnPathCnameValue: doc.returnPathCnameValue,
     updatedAt: doc.updatedAt?.toISOString?.() ?? new Date().toISOString(),
   };
 }
@@ -51,6 +56,11 @@ export async function saveState(state: ProvisioningState): Promise<void> {
       oracleDkimCnameName: state.oracleDkimCnameName,
       oracleDkimCnameValue: state.oracleDkimCnameValue,
       oracleSenderId: state.oracleSenderId,
+      dnsMode: state.dnsMode,
+      verificationToken: state.verificationToken,
+      oracleReturnPathId: state.oracleReturnPathId,
+      returnPathCnameName: state.returnPathCnameName,
+      returnPathCnameValue: state.returnPathCnameValue,
     },
     { upsert: true, new: true }
   );

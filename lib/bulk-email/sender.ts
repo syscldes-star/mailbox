@@ -56,10 +56,14 @@ export interface SendResult {
 
 export class SendError extends Error {
   retryable: boolean;
-  constructor(message: string, retryable: boolean) {
+  /** Oracle's sending-rate limit was hit: "minute" clears by itself in a
+   * minute (wait and retry); "day" won't clear until tomorrow. */
+  rateLimited: "minute" | "day" | null;
+  constructor(message: string, retryable: boolean, rateLimited: "minute" | "day" | null = null) {
     super(message);
     this.name = "SendError";
     this.retryable = retryable;
+    this.rateLimited = rateLimited;
   }
 }
 
@@ -135,5 +139,9 @@ function toSendError(err: unknown): SendError {
   // (bad address, unapproved sender, oversized message) will fail the
   // same way again.
   const retryable = status === undefined || status === -1 || status === 429 || status >= 500;
-  return new SendError(e.opcRequestId ? `${parts} (request ${e.opcRequestId})` : parts, retryable);
+  // Oracle answers 400 "LimitExceeded: Maximum messages sent per minute
+  // reached" (or per day) when the tenancy's sending limits are hit.
+  const limitHit = status === 429 || /LimitExceeded|limit is \d+/i.test(parts);
+  const rateLimited = !limitHit ? null : /per (day|24)|daily/i.test(parts) ? "day" : "minute";
+  return new SendError(e.opcRequestId ? `${parts} (request ${e.opcRequestId})` : parts, retryable, rateLimited);
 }

@@ -7,6 +7,7 @@
 import { NextRequest } from "next/server";
 import mongoose from "mongoose";
 import { requireAuth } from "@/lib/api/requireAuth";
+import { workVisibleTo } from "@/lib/visibility";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { BulkEmailJob } from "@/lib/models/BulkEmailJob";
 import { clickMapHtml, clicksByUrl, matchClicks, templateLinks } from "@/lib/bulk-email/link-stats";
@@ -19,7 +20,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   const { id } = await params;
   if (!mongoose.isValidObjectId(id)) return apiError("Bulk send not found.", 404);
 
-  const job = await BulkEmailJob.findOne({ _id: id, workspaceId: auth.workspaceId }).select("bodyHtml counts trackClicks subject").lean();
+  const job = await BulkEmailJob.findOne({ _id: id, ...(await workVisibleTo(auth!)) }).select("bodyHtml counts trackClicks subject").lean();
   if (!job) return apiError("Bulk send not found.", 404);
 
   const links = templateLinks(job.bodyHtml);

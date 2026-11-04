@@ -8,6 +8,7 @@
 
 import { NextRequest } from "next/server";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
+import { workVisibleTo } from "@/lib/visibility";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { EmailSuppression } from "@/lib/models/EmailSuppression";
 import { cleanOptions, computeEngagement, SEGMENTS, type Segment } from "@/lib/bulk-email/engagement";
@@ -24,7 +25,7 @@ export async function GET(req: NextRequest) {
   const segment = q.get("segment") as Segment | null;
   const search = (q.get("q") ?? "").trim().toLowerCase();
 
-  const { people, summary, alreadyStopped, trackedSends } = await computeEngagement(auth.workspaceId, options);
+  const { people, summary, alreadyStopped, trackedSends } = await computeEngagement(auth.workspaceId, options, await workVisibleTo(auth));
   const matching = people
     .filter((p) => (!segment || !SEGMENTS.includes(segment) || p.segment === segment))
     .filter((p) => !search || p.email.includes(search) || (p.name ?? "").toLowerCase().includes(search))
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest) {
   if (body.action !== "stop_inactive") return apiError("Unknown action.", 400);
 
   const options = cleanOptions(body);
-  const { people } = await computeEngagement(auth.workspaceId, options);
+  const { people } = await computeEngagement(auth.workspaceId, options, await workVisibleTo(auth));
   const inactive = people.filter((p) => p.segment === "inactive");
   if (inactive.length === 0) return apiSuccess({ stopped: 0 }, "Nobody is inactive right now.");
 

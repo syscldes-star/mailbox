@@ -8,7 +8,7 @@ import { useAuthStore } from "@/store/useAuthStore";
 const MAIN_APP_URL = process.env.NEXT_PUBLIC_MAIN_APP_URL ?? "";
 
 export default function RequireAuth({ children }: { children: React.ReactNode }) {
-  const { user, isLoading, checkSession } = useAuthStore();
+  const { user, isLoading, accessDenied, checkSession } = useAuthStore();
 
   useEffect(() => {
     checkSession();
@@ -17,10 +17,16 @@ export default function RequireAuth({ children }: { children: React.ReactNode })
 
   useEffect(() => {
     if (!isLoading && !user && typeof window !== "undefined") {
+      if (accessDenied) {
+        // Signed in, but the Email panel isn't theirs: main's /panel
+        // sends them to their own panel (or the waiting page).
+        window.location.href = `${MAIN_APP_URL}/panel`;
+        return;
+      }
       const returnTo = encodeURIComponent(window.location.href);
       window.location.href = `${MAIN_APP_URL}/login?returnTo=${returnTo}`;
     }
-  }, [isLoading, user]);
+  }, [isLoading, user, accessDenied]);
 
   if (isLoading || !user) {
     return (

@@ -15,6 +15,7 @@
 // waiting on).
 
 export type ProvisioningStep =
+  | "ownership_verified" // manual DNS only: the _vidyarishi TXT record proves the customer controls the domain
   | "oracle_email_domain"
   | "oracle_dkim_create"
   | "dns_dkim_cname"
@@ -22,9 +23,22 @@ export type ProvisioningStep =
   | "oracle_dkim_active"
   | "oracle_sender"
   | "mailcow_domain"
-  | "mailcow_mailbox";
+  | "mailcow_mailbox"
+  // Custom return path (bounce-bom.<domain>): Gmail then shows "mailed-by
+  // <domain>" instead of Oracle's shared bounce domain. Last, so a slow
+  // CNAME never holds up the mailbox.
+  | "oracle_return_path"
+  | "dns_return_path"
+  | "return_path_active";
 
-export type StepStatus = "pending" | "in_progress" | "done" | "failed";
+/** "waiting": paused until a DNS record appears (the customer adds it, or
+ * Oracle detects it). Not an error -- setup resumes by itself. */
+export type StepStatus = "pending" | "in_progress" | "done" | "failed" | "waiting";
+
+/** vercel: the domain's DNS is on Vercel (a site's custom domain), so
+ * records are added automatically. manual: DNS is elsewhere (GoDaddy,
+ * Hostinger...) -- the customer copies the records and we check for them. */
+export type DnsMode = "vercel" | "manual";
 
 export interface ProvisioningState {
   domain: string;
@@ -39,6 +53,13 @@ export interface ProvisioningState {
   oracleDkimCnameName?: string; // e.g. oci2026b._domainkey.customerdomain.com
   oracleDkimCnameValue?: string; // e.g. oci2026b.customerdomain.com.dkim.bom1.oracleemaildelivery.com
   oracleSenderId?: string;
+  /** Absent on records from before manual DNS existed: those are vercel. */
+  dnsMode?: DnsMode;
+  /** Manual DNS: the value the ownership TXT record must contain. */
+  verificationToken?: string;
+  oracleReturnPathId?: string;
+  returnPathCnameName?: string;
+  returnPathCnameValue?: string;
   updatedAt: string;
 }
 
@@ -46,7 +67,9 @@ export function initialProvisioningState(
   domain: string,
   customerId: string,
   defaultMailboxLocalPart: string,
-  defaultMailboxPassword: string
+  defaultMailboxPassword: string,
+  dnsMode: DnsMode = "vercel",
+  verificationToken?: string
 ): ProvisioningState {
   return {
     domain,
@@ -54,7 +77,11 @@ export function initialProvisioningState(
     defaultMailboxLocalPart,
     defaultMailboxPassword,
     defaultMailboxPasswordRevealed: false,
+    dnsMode,
+    verificationToken,
     steps: {
+      // Vercel domains are already verified through the site's custom domain.
+      ownership_verified: dnsMode === "manual" ? "pending" : "done",
       oracle_email_domain: "pending",
       oracle_dkim_create: "pending",
       dns_dkim_cname: "pending",
@@ -63,6 +90,9 @@ export function initialProvisioningState(
       oracle_sender: "pending",
       mailcow_domain: "pending",
       mailcow_mailbox: "pending",
+      oracle_return_path: "pending",
+      dns_return_path: "pending",
+      return_path_active: "pending",
     },
     errors: {},
     updatedAt: new Date().toISOString(),

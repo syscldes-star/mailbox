@@ -68,6 +68,15 @@ export async function apiFetch<T>(path: string, options: RequestInit = {}): Prom
       // status code alone is still far more useful than nothing.
     }
     const detail = bodySnippet ? `: ${bodySnippet}` : "";
+    if (response.status === 413) {
+      // nginx rejected the upload before it reached the app.
+      throw new ApiError(
+        "File too large for the server's upload limit (currently about 1 MB). Use a smaller file, or ask your admin to raise client_max_body_size in nginx.",
+        413,
+        path,
+        options.method ?? "GET"
+      );
+    }
     throw new ApiError(
       `The server returned an unexpected response (HTTP ${response.status})${detail}`,
       response.status,

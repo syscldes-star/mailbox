@@ -6,6 +6,7 @@
 
 import { NextRequest } from "next/server";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
+import { visibleTo, withCreators } from "@/lib/visibility";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { ContactList, MAX_CONTACTS_PER_LIST } from "@/lib/models/ContactList";
 import { parseRecipients } from "@/lib/bulk-email/recipients";
@@ -16,12 +17,14 @@ export async function GET() {
   if (!auth) return apiError("Not authenticated.", 401);
 
   const lists = await ContactList.aggregate([
-    { $match: { workspaceId: auth.workspaceId } },
+    // Owner: every list. Member: their own + ones shared with them.
+    { $match: visibleTo(auth) },
     { $sort: { updatedAt: -1 } },
-    { $project: { name: 1, columns: 1, createdAt: 1, updatedAt: 1, count: { $size: "$contacts" } } },
+    { $project: { name: 1, columns: 1, createdBy: 1, sharedWith: 1, createdAt: 1, updatedAt: 1, count: { $size: "$contacts" } } },
   ]);
   return apiSuccess({
-    lists: lists.map(({ _id, ...rest }) => ({ id: String(_id), ...rest })),
+    lists: (await withCreators(lists as { _id: unknown; createdBy?: string }[], auth)).map(({ _id, ...rest }) => ({ id: String(_id), ...rest })),
+    isOwner: auth.membership.role === "owner",
     canManage: hasMinimumRole(auth.membership.role, MIN_SEND_ROLE),
   });
 }

@@ -174,3 +174,54 @@ export async function getDkimLifecycleState(dkimId: string): Promise<string | un
   const { dkim } = await getClient().getDkim({ dkimId });
   return dkim.lifecycleState;
 }
+
+// ---- Custom return path ----
+//
+// The return path (envelope sender / bounce address) defaults to Oracle's
+// shared domain, so Gmail shows "mailed-by: bom1.rp.oracleemaildelivery.com".
+// A custom one (bounce-bom.<domain>, a CNAME to Oracle) makes it show the
+// customer's own domain and helps SPF alignment.
+
+/** Return path host for a domain, e.g. bounce-bom.example.com. */
+export function returnPathName(domainName: string) {
+  return `${process.env.OCI_RETURN_PATH_PREFIX ?? "bounce-bom"}.${domainName}`;
+}
+
+/** Create (or reuse) the return path, and read the CNAME Oracle wants published. */
+export async function createReturnPath(emailDomainId: string, domainName: string) {
+  const client = getClient();
+  const name = returnPathName(domainName);
+  const existing = await client.listEmailReturnPaths({ compartmentId: COMPARTMENT_ID, parentResourceId: emailDomainId });
+  const found = existing.emailReturnPathCollection.items.find((r) => r.name?.toLowerCase() === name.toLowerCase());
+  const id =
+    found?.id ??
+    (
+      await client.createEmailReturnPath({
+        createEmailReturnPathDetails: { name, parentResourceId: emailDomainId, description: `Return path for ${domainName}` },
+      })
+    ).emailReturnPath.id;
+  return getReturnPath(id);
+}
+
+export async function getReturnPath(returnPathId: string) {
+  const { emailReturnPath } = await getClient().getEmailReturnPath({ emailReturnPathId: returnPathId });
+  return {
+    id: emailReturnPath.id,
+    state: emailReturnPath.lifecycleState as string | undefined,
+    cnameName: emailReturnPath.dnsSubdomainName,
+    cnameValue: emailReturnPath.cnameRecordValue,
+  };
+}
+
+/** Polls until ACTIVE. Returns false on timeout (Oracle hasn't detected
+ * the CNAME yet) so the caller can wait and check again later. */
+export async function waitForReturnPathActive(returnPathId: string, timeoutMs = 60_000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const rp = await getReturnPath(returnPathId);
+    if (rp.state === "ACTIVE") return true;
+    if (rp.state === "FAILED") throw new Error(`Oracle return path ${returnPathId} entered FAILED state`);
+    await sleep(5000);
+  }
+  return false;
+}

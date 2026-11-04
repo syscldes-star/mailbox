@@ -7,7 +7,8 @@
 import { NextRequest } from "next/server";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
 import { apiSuccess, apiError } from "@/lib/api/response";
-import { EmailImage, IMAGE_TYPES, MAX_IMAGE_BYTES } from "@/lib/models/EmailImage";
+import { EmailImage, IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_UPLOAD_BYTES } from "@/lib/models/EmailImage";
+import { shrinkImage } from "@/lib/bulk-email/shrink-image";
 import { MIN_SEND_ROLE, publicBaseUrl } from "@/lib/bulk-email/access";
 import { imageUrl } from "@/lib/bulk-email/images";
 
@@ -45,13 +46,27 @@ export async function POST(req: NextRequest) {
   const ext = (filename.split(".").pop() ?? "").toLowerCase();
   if (!IMAGE_TYPES[ext]) return apiError("Use a PNG, JPG, GIF or WebP image.", 400);
   if (file.size === 0) return apiError("That file is empty.", 400);
-  if (file.size > MAX_IMAGE_BYTES) {
-    return apiError(`That image is ${(file.size / 1048576).toFixed(1)} MB -- the limit is 2 MB. Large images also load slowly in email.`, 400);
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return apiError(`That image is ${(file.size / 1048576).toFixed(1)} MB -- the limit is ${MAX_UPLOAD_BYTES / 1048576} MB.`, 400);
   }
-  const data = Buffer.from(await file.arrayBuffer());
-  const contentType = sniff(data);
-  if (!contentType) return apiError("That file isn't a valid PNG, JPG, GIF or WebP image.", 400);
-  const realExt = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" }[contentType]!;
+  const original = Buffer.from(await file.arrayBuffer());
+  const sniffed = sniff(original);
+  if (!sniffed) return apiError("That file isn't a valid PNG, JPG, GIF or WebP image.", 400);
+
+  // Big images are scaled down and re-encoded so emails stay light.
+  let shrunk;
+  try {
+    shrunk = await shrinkImage(original, sniffed);
+  } catch {
+    return apiError("That image couldn't be read -- it may be damaged. Try exporting it again.", 400);
+  }
+  const { data, contentType, ext: realExt } = shrunk;
+  if (data.length > MAX_IMAGE_BYTES) {
+    return apiError(
+      `Even after shrinking, that image is ${(data.length / 1048576).toFixed(1)} MB -- the limit is 2 MB. Large GIFs can't be shrunk; try a JPG.`,
+      400
+    );
+  }
 
   const image = await EmailImage.create({
     workspaceId: auth.workspaceId,
@@ -63,8 +78,15 @@ export async function POST(req: NextRequest) {
     createdBy: auth.userId,
   });
   return apiSuccess(
-    { id: String(image._id), filename, size: data.length, url: imageUrl(publicBaseUrl(req), image), createdAt: image.createdAt },
-    "Image uploaded.",
+    {
+      id: String(image._id),
+      filename,
+      size: data.length,
+      url: imageUrl(publicBaseUrl(req), image),
+      createdAt: image.createdAt,
+      shrunkFrom: shrunk.changed ? original.length : undefined,
+    },
+    shrunk.changed ? `Image uploaded and shrunk from ${(original.length / 1048576).toFixed(1)} MB.` : "Image uploaded.",
     201
   );
 }

@@ -4,12 +4,15 @@
 // sender, so what the composer previews is exactly what gets sent.
 // Tags look like {{name}}, {{email}}, or {{any_csv_column}}; unknown tags
 // render as empty strings rather than leaking the raw "{{...}}".
+// A fallback after a pipe is used when the value is empty or missing:
+// "Dear {{name|Professional}}," -> "Dear Professional," for a contact with
+// no name, instead of "Dear ,".
 
 export interface TemplateVars {
   [key: string]: string | undefined;
 }
 
-const TAG_PATTERN = /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g;
+const TAG_PATTERN = /\{\{\s*([a-zA-Z0-9_]+)\s*(?:\|([^{}]*))?\}\}/g;
 
 export function escapeHtml(value: string): string {
   return value
@@ -24,8 +27,11 @@ export function escapeHtml(value: string): string {
  * recipient name like "<script>" from an uploaded CSV can't inject
  * markup into the email. */
 export function renderTemplate(template: string, vars: TemplateVars, { html }: { html: boolean }): string {
-  return template.replace(TAG_PATTERN, (_, key: string) => {
-    const value = vars[key.toLowerCase()] ?? "";
+  return template.replace(TAG_PATTERN, (_, key: string, fallback?: string) => {
+    const raw = (vars[key.toLowerCase()] ?? "").trim();
+    // The fallback is typed by the sender inside HTML, so it may already
+    // contain entities (&amp;) -- decode them before escaping once.
+    const value = raw || (fallback ?? "").trim().replace(/&amp;/g, "&").replace(/&nbsp;/g, " ");
     return html ? escapeHtml(value) : value;
   });
 }

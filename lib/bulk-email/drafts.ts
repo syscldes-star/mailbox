@@ -8,6 +8,7 @@
 import { MAX_DRAFT_RECIPIENTS_CHARS } from "../models/EmailDraft";
 import { parseRecipients } from "./recipients";
 import { findCampaign } from "./campaigns";
+import type { AuthContext } from "../api/requireAuth";
 
 export interface DraftInput {
   campaignId?: string | null;
@@ -25,7 +26,7 @@ export interface DraftInput {
   attachments?: { id?: string; filename?: string; size?: number }[];
 }
 
-export async function cleanDraftInput(workspaceId: string, input: DraftInput) {
+export async function cleanDraftInput(auth: AuthContext, input: DraftInput) {
   const str = (v: unknown, max: number) => String(v ?? "").slice(0, max);
   const recipientsText = str(input.recipientsText, MAX_DRAFT_RECIPIENTS_CHARS + 1);
   if (recipientsText.length > MAX_DRAFT_RECIPIENTS_CHARS) {
@@ -36,7 +37,7 @@ export async function cleanDraftInput(workspaceId: string, input: DraftInput) {
 
   let campaignId: string | undefined;
   if (input.campaignId) {
-    if (!(await findCampaign(workspaceId, input.campaignId))) return { error: "That campaign no longer exists." };
+    if (!(await findCampaign(auth, input.campaignId))) return { error: "That campaign no longer exists." };
     campaignId = input.campaignId;
   }
 

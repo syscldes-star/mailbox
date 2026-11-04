@@ -8,6 +8,8 @@ import mongoose from "mongoose";
 import { BulkEmailJob, EMPTY_COUNTS, type JobCounts } from "../models/BulkEmailJob";
 import { Campaign } from "../models/Campaign";
 import { EmailDraft } from "../models/EmailDraft";
+import type { AuthContext } from "../api/requireAuth";
+import { visibleTo } from "../visibility";
 
 export interface CampaignStats {
   /** Recipient totals across all the campaign's sends. */
@@ -68,8 +70,9 @@ export async function campaignStats(workspaceId: string, campaignIds: string[]):
   return out;
 }
 
-/** The campaign if it exists in this workspace, else null. */
-export async function findCampaign(workspaceId: string, id: unknown) {
+/** The campaign if it exists and this person can see it (their own,
+ * shared with them, or any for the owner), else null. */
+export async function findCampaign(auth: AuthContext, id: unknown) {
   if (typeof id !== "string" || !mongoose.isValidObjectId(id)) return null;
-  return Campaign.findOne({ _id: id, workspaceId }).lean();
+  return Campaign.findOne({ _id: id, ...visibleTo(auth) }).lean();
 }

@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3002",
+    "dev": "next dev -p 3003",
     "build": "next build",
-    "start": "next start -p 3002"
+    "start": "next start -p 3003"
   },
   "dependencies": {
     "@vercel/functions": "^1.x",
@@ -19,6 +19,7 @@
     "oci-emaildataplane": "^2.140.1",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
+    "sharp": "^0.35.4",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

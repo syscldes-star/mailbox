@@ -5,6 +5,7 @@
 
 import { NextRequest } from "next/server";
 import { requireAuth, hasMinimumRole } from "@/lib/api/requireAuth";
+import { visibleTo, withCreators } from "@/lib/visibility";
 import { apiSuccess, apiError } from "@/lib/api/response";
 import { Campaign } from "@/lib/models/Campaign";
 import { campaignStats } from "@/lib/bulk-email/campaigns";
@@ -14,7 +15,8 @@ export async function GET() {
   const auth = await requireAuth();
   if (!auth) return apiError("Not authenticated.", 401);
 
-  const campaigns = await Campaign.find({ workspaceId: auth.workspaceId }).sort({ createdAt: -1 }).limit(500).lean();
+  // Owner: every campaign. Member: their own + ones shared with them.
+  const campaigns = await withCreators(await Campaign.find(visibleTo(auth)).sort({ createdAt: -1 }).limit(500).lean(), auth);
   const stats = await campaignStats(auth.workspaceId, campaigns.map((c) => String(c._id)));
   return apiSuccess({
     campaigns: campaigns.map((c) => {
@@ -23,12 +25,15 @@ export async function GET() {
         id: String(c._id),
         name: c.name,
         description: c.description ?? "",
+        createdByInfo: c.createdByInfo,
+        sharedWith: c.sharedWith ?? [],
         createdAt: c.createdAt,
         lastActivityAt: s.lastActivityAt ?? c.updatedAt,
         ...s,
       };
     }),
     canManage: hasMinimumRole(auth.membership.role, MIN_SEND_ROLE),
+    isOwner: auth.membership.role === "owner",
   });
 }
 

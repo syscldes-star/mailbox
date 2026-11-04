@@ -24,6 +24,9 @@ export interface ISignupForm extends Document {
   active: boolean;
   signups: number;
   createdBy: string;
+  /** Team members the workspace owner shared this with (user ids). Members
+   * see what they created plus what's shared with them (lib/visibility.ts). */
+  sharedWith: string[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -44,6 +47,7 @@ const SignupFormSchema = new Schema<ISignupForm>(
     active: { type: Boolean, default: true },
     signups: { type: Number, default: 0 },
     createdBy: { type: String, required: true },
+    sharedWith: { type: [String], default: [] },
   },
   { timestamps: true }
 );
