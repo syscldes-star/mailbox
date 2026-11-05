@@ -79,7 +79,10 @@ async function runSync(): Promise<BounceSyncResult> {
   const result: BounceSyncResult = { checked: 0, recipientsMarked: 0, suppressionsAdded: 0 };
   const iterator = getClient().listSuppressionsRecordIterator({
     compartmentId: process.env.OCI_COMPARTMENT_OCID!,
-    timeCreatedGreaterThanOrEqualTo: since,
+    // Passed as a string: the OCI SDK formats Date query params wrongly
+    // (no leading zero on the hour, and local time labelled as UTC), which
+    // Oracle rejects with InvalidParameter for any time before 10:00.
+    timeCreatedGreaterThanOrEqualTo: since.toISOString().replace(/\.\d{3}Z$/, "Z") as unknown as Date,
     sortBy: email.requests.ListSuppressionsRequest.SortBy.Timecreated,
     sortOrder: email.models.SortOrder.Asc,
   });
