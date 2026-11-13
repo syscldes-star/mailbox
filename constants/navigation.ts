@@ -1,4 +1,4 @@
-import { Mail, ArrowLeftCircle, LifeBuoy } from "lucide-react";
+import { Mail, ArrowLeftCircle, LifeBuoy, Cable } from "lucide-react";
 import { NavigationItem } from "@/types/navigation";
 
 export const navigation: NavigationItem[] = [
@@ -35,6 +35,14 @@ export const navigation: NavigationItem[] = [
         ],
       },
     ],
+  },
+  {
+    // Links to our other apps (the CRM...).
+    id: "integrations",
+    title: "Integrations",
+    href: "/integrations",
+    icon: Cable,
+    type: "link",
   },
   {
     id: "back-to-dashboard",

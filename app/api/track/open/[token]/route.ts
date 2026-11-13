@@ -9,6 +9,7 @@ import { connectToDatabase } from "@/lib/db/mongodb";
 import { incCounts } from "@/lib/models/BulkEmailJob";
 import { BulkRecipient } from "@/lib/models/BulkRecipient";
 import { verifyOpenToken } from "@/lib/bulk-email/tracking";
+import { queueEngagement } from "@/lib/integrations/crm";
 
 const PIXEL = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
 
@@ -37,7 +38,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ tok
     const sent = { jobId: parsed.jobId, index: parsed.index, status: "sent" };
     await BulkRecipient.updateOne(sent, { $inc: { openCount: 1 }, $set: { lastOpenedAt: now } });
     const first = await BulkRecipient.updateOne({ ...sent, openedAt: null }, { $set: { openedAt: now } });
-    if (first.modifiedCount === 1) await incCounts(parsed.jobId, { opened: 1 });
+    if (first.modifiedCount === 1) {
+      await incCounts(parsed.jobId, { opened: 1 });
+      // The first open goes in the CRM lead's history (Integrations → CRM).
+      await queueEngagement("open", parsed.jobId, parsed.index);
+    }
   } catch (err) {
     console.error("[bulk-email] failed to record open", err);
   }
