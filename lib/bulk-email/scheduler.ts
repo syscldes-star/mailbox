@@ -18,6 +18,7 @@ import { resumeStaleJobs, startDueScheduledJobs } from "./process-job";
 import { syncBounces } from "./bounces";
 import { cleanupAbandonedUploads } from "./recipient-store";
 import { resumeWaitingDomains } from "../email-provisioning/resume";
+import { runCrmQueue } from "../integrations/crm";
 
 const TICK_MS = 60_000;
 const BOUNCE_SYNC_EVERY_TICKS = 15;
@@ -32,6 +33,8 @@ async function tick(count: number) {
   await connectToDatabase();
   await startDueScheduledJobs();
   await resumeStaleJobs();
+  // Signups and opens/clicks waiting to reach the CRM (Integrations → CRM).
+  await runCrmQueue().catch((err) => console.error("[crm] queue failed", err));
   if (count % DOMAIN_CHECK_EVERY_TICKS === 0) await resumeWaitingDomains();
   if (count % BOUNCE_SYNC_EVERY_TICKS === 0) {
     await cleanupAbandonedUploads();

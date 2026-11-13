@@ -12,6 +12,7 @@ import { ContactList, MAX_CONTACTS_PER_LIST } from "@/lib/models/ContactList";
 import { EmailSuppression } from "@/lib/models/EmailSuppression";
 import { escapeHtml } from "@/lib/bulk-email/template";
 import { publicPage, verifyConfirmToken } from "@/lib/bulk-email/subscribe";
+import { queueForCrm } from "@/lib/integrations/crm";
 
 function invalid() {
   return publicPage(
@@ -85,6 +86,8 @@ export async function POST(req: NextRequest) {
   // spam complaints stay -- those need a person to review.
   await EmailSuppression.deleteOne({ workspaceId: form.workspaceId, email: payload.email, reason: "unsubscribed" });
   if (added) await SignupForm.updateOne({ _id: form._id }, { $inc: { signups: 1 } });
+  // A new subscriber becomes a CRM lead (Integrations → CRM).
+  await queueForCrm({ workspaceId: form.workspaceId, kind: "signup", email: payload.email, name: payload.name, detail: form.name, formId: String(form._id) });
 
   if (form.redirectUrl && /^https?:\/\//i.test(form.redirectUrl)) {
     return NextResponse.redirect(form.redirectUrl, 303);

@@ -10,6 +10,7 @@ import { connectToDatabase } from "@/lib/db/mongodb";
 import { incCounts } from "@/lib/models/BulkEmailJob";
 import { BulkRecipient } from "@/lib/models/BulkRecipient";
 import { verifyClickToken } from "@/lib/bulk-email/tracking";
+import { queueEngagement } from "@/lib/integrations/crm";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
@@ -36,6 +37,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ toke
     // blocked the tracking pixel.
     const firstOpen = await BulkRecipient.updateOne({ ...sent, openedAt: null }, { $set: { openedAt: now } });
     await incCounts(parsed.jobId, { clicked: firstClick.modifiedCount, opened: firstOpen.modifiedCount });
+    // The first click goes in the CRM lead's history (Integrations → CRM).
+    if (firstClick.modifiedCount === 1) await queueEngagement("click", parsed.jobId, parsed.index, url.slice(0, 500));
   } catch (err) {
     // Never block the person from reaching the link over a tracking error.
     console.error("[bulk-email] failed to record click", err);
